@@ -96,9 +96,15 @@ case "${1:-help}" in
     ;;
 
   init)
-    log "Lancement de l'indexation initiale..."
-    $COMPOSE --profile init up --build indexer-init
-    log "Indexation terminée."
+    SOUS_DOSSIER="${2:-}"
+    if [ -n "$SOUS_DOSSIER" ]; then
+        log "Réindexation du sous-dossier : $SOUS_DOSSIER"
+        $COMPOSE --profile init run --build --rm indexer-init python producer.py "$SOUS_DOSSIER"
+    else
+        log "Lancement de l'indexation initiale (dossier complet)..."
+        $COMPOSE --profile init up --build indexer-init
+    fi
+    log "Publication terminée — suivre l'avancement avec : ./manage.sh logs worker"
     ;;
 
   scale-workers)
@@ -138,7 +144,7 @@ case "${1:-help}" in
     echo "    restart         Redémarrer en mode dev"
     echo "    status          État + stats Elasticsearch"
     echo "    logs [service]  Logs en temps réel"
-    echo "    init            Indexation initiale des documents"
+    echo "    init [sous-dossier]  Indexation (complète, ou d'un sous-dossier de /documents)"
     echo "    scale-workers N Ajuster le nombre de workers"
     echo "    backup          Snapshot Elasticsearch"
     echo "    reset           Supprimer toutes les données (irréversible)"

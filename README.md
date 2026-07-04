@@ -65,7 +65,8 @@ chmod +x manage.sh
 ./manage.sh stop
 ./manage.sh status
 ./manage.sh logs <service>  # ex: api, worker, watcher, es01-dev
-./manage.sh init            # Indexation initiale
+./manage.sh init            # Indexation initiale (dossier complet)
+./manage.sh init finance    # Réindexer uniquement /documents/finance
 ./manage.sh scale-workers N
 ./manage.sh backup
 ./manage.sh reset           # ⚠️ supprime toutes les données

@@ -1,0 +1,399 @@
+# ─────────────────────────────────────────────────────────────
+#  DocSearch — Docker Compose
+#  Elasticsearch 9.4.3 · Apache Tika 3.3.1.0 · Kafka 8.3 KRaft · Java 17
+#
+#  Deux modes via profils Docker Compose :
+#
+#  DÉVELOPPEMENT (défaut, manage.sh start) :
+#    → es01-dev  : single-node, 1 GB RAM, sans cluster.initial_master_nodes
+#    → es02/es03 : non démarrés (profil "production" uniquement)
+#
+#  PRODUCTION (manage.sh start-prod) :
+#    → es01/es02/es03 : cluster 3 nœuds, 4 GB RAM chacun
+# ─────────────────────────────────────────────────────────────
+
+x-tika-common: &tika-common
+  image: apache/tika:3.3.1.0-full
+  networks:
+    - docsearch-net
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:9998/tika"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+
+x-app-env: &app-env
+  ES_HOST:         http://es01-dev:9200
+  TIKA_SERVERS:    http://tika1:9998,http://tika2:9998,http://tika3:9998,http://tika4:9998
+  KAFKA_BOOTSTRAP: kafka:9092
+  REDIS_HOST:      redis
+  DOCS_FOLDER:     /documents
+  LDAP_ENABLED:    ${LDAP_ENABLED:-false}
+  LDAP_HOST:       ${LDAP_HOST:-}
+  LDAP_BASE:       ${LDAP_BASE:-}
+  LDAP_BINDDN:     ${LDAP_BINDDN:-}
+  LDAP_PASS:       ${LDAP_PASS:-}
+  DEV_USER:        ${DEV_USER:-}
+  WATCHER_POLL_INTERVAL: ${WATCHER_POLL_INTERVAL:-10}
+
+services:
+
+  # ══════════════════════════════════════════════════════════
+  # ELASTICSEARCH — MODE DÉVELOPPEMENT (single-node)
+  # Profil : dev (défaut)
+  # Pas de cluster.initial_master_nodes — incompatible avec
+  # discovery.type=single-node en ES 9.x
+  # ══════════════════════════════════════════════════════════
+  es01-dev:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.4.3
+    container_name: docsearch-es01
+    profiles: ["dev", "init"]
+    environment:
+      - node.name=es01
+      - cluster.name=docsearch-cluster
+      - discovery.type=single-node
+      - bootstrap.memory_lock=false
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=${ES_JAVA_OPTS:--Xms1g -Xmx1g}"
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile:  { soft: 65536, hard: 65536 }
+    volumes:
+      - es01_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - docsearch-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -v '\"status\":\"red\"'"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # ══════════════════════════════════════════════════════════
+  # ELASTICSEARCH — MODE PRODUCTION (cluster 3 nœuds)
+  # Profil : production
+  # ══════════════════════════════════════════════════════════
+  es01:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.4.3
+    container_name: docsearch-es01-prod
+    profiles: ["production"]
+    environment:
+      - node.name=es01
+      - cluster.name=docsearch-cluster
+      - discovery.seed_hosts=es02,es03
+      - cluster.initial_master_nodes=es01,es02,es03
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=${ES_JAVA_OPTS:--Xms4g -Xmx4g}"
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile:  { soft: 65536, hard: 65536 }
+    volumes:
+      - es01_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - docsearch-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -v '\"status\":\"red\"'"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  es02:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.4.3
+    container_name: docsearch-es02
+    profiles: ["production"]
+    environment:
+      - node.name=es02
+      - cluster.name=docsearch-cluster
+      - discovery.seed_hosts=es01,es03
+      - cluster.initial_master_nodes=es01,es02,es03
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=${ES_JAVA_OPTS:--Xms4g -Xmx4g}"
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile:  { soft: 65536, hard: 65536 }
+    volumes:
+      - es02_data:/usr/share/elasticsearch/data
+    networks:
+      - docsearch-net
+    restart: unless-stopped
+
+  es03:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.4.3
+    container_name: docsearch-es03
+    profiles: ["production"]
+    environment:
+      - node.name=es03
+      - cluster.name=docsearch-cluster
+      - discovery.seed_hosts=es01,es02
+      - cluster.initial_master_nodes=es01,es02,es03
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=${ES_JAVA_OPTS:--Xms4g -Xmx4g}"
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile:  { soft: 65536, hard: 65536 }
+    volumes:
+      - es03_data:/usr/share/elasticsearch/data
+    networks:
+      - docsearch-net
+    restart: unless-stopped
+
+  # ── Kibana ────────────────────────────────────────────────
+  kibana:
+    image: docker.elastic.co/kibana/kibana:9.4.3
+    container_name: docsearch-kibana
+    profiles: ["dev", "production"]
+    environment:
+      - ELASTICSEARCH_HOSTS=http://es01-dev:9200
+    ports:
+      - "5601:5601"
+    networks:
+      - docsearch-net
+    restart: unless-stopped
+
+  # ── Apache Tika 3.3.1.0 (×4) ─────────────────────────────
+  tika1:
+    <<: *tika-common
+    container_name: docsearch-tika1
+    profiles: ["dev", "production", "init"]
+    ports: ["9998:9998"]
+
+  tika2:
+    <<: *tika-common
+    container_name: docsearch-tika2
+    profiles: ["dev", "production", "init"]
+    ports: ["9999:9998"]
+
+  tika3:
+    <<: *tika-common
+    container_name: docsearch-tika3
+    profiles: ["dev", "production", "init"]
+    ports: ["10000:9998"]
+
+  tika4:
+    <<: *tika-common
+    container_name: docsearch-tika4
+    profiles: ["dev", "production", "init"]
+    ports: ["10001:9998"]
+
+  # ── Kafka 8.3 — Mode KRaft (sans Zookeeper) ─────────────
+  # Confluent Platform 8.3 inclut Kafka 4.3 qui abandonne Zookeeper
+  # au profit de KRaft : le coordinateur de cluster est intégré
+  # directement dans les brokers. Architecture simplifiée, plus
+  # de service Zookeeper à gérer ni de healthcheck instable.
+  kafka:
+    image: confluentinc/cp-kafka:8.3.0
+    container_name: docsearch-kafka
+    profiles: ["dev", "production", "init"]
+    environment:
+      KAFKA_NODE_ID:                          1
+      KAFKA_PROCESS_ROLES:                    broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS:         1@kafka:9093
+      KAFKA_LISTENERS:                        PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS:             PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP:   PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES:        CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME:       PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE:        "true"
+      KAFKA_LOG_RETENTION_HOURS:              24
+      KAFKA_MESSAGE_MAX_BYTES:                10485760
+      CLUSTER_ID:                             "MkU3OEVBNTcwNTJENDM2Qg"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - docsearch-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  # ── Redis ─────────────────────────────────────────────────
+  redis:
+    image: redis:7.2-alpine
+    container_name: docsearch-redis
+    profiles: ["dev", "production", "init"]
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - docsearch-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ── Indexation initiale ───────────────────────────────────
+  indexer-init:
+    build:
+      context: ../docsearch-ingestion
+      dockerfile: Dockerfile
+      args:
+        DOCKER_UID: ${DOCKER_UID:-1000}
+    container_name: docsearch-indexer-init
+    profiles: ["init"]
+    command: python indexer.py
+    environment:
+      <<: *app-env
+    volumes:
+      - documents:/documents:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - docsearch-net
+
+  # ── Workers (×8) ─────────────────────────────────────────
+  worker:
+    build:
+      context: ../docsearch-ingestion
+      dockerfile: Dockerfile
+      args:
+        DOCKER_UID: ${DOCKER_UID:-1000}
+    profiles: ["dev", "production"]
+    command: python worker.py
+    environment:
+      <<: *app-env
+    volumes:
+      - documents:/documents:ro
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - docsearch-net
+    restart: unless-stopped
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1G
+
+  # ── Watcher ───────────────────────────────────────────────
+  watcher:
+    build:
+      context: ../docsearch-ingestion
+      dockerfile: Dockerfile
+      args:
+        DOCKER_UID: ${DOCKER_UID:-1000}
+    container_name: docsearch-watcher
+    profiles: ["dev", "production"]
+    command: python watcher.py
+    environment:
+      <<: *app-env
+    volumes:
+      - documents:/documents:ro
+    depends_on:
+      kafka:
+        condition: service_started
+    networks:
+      - docsearch-net
+    restart: unless-stopped
+
+  # ── API FastAPI ───────────────────────────────────────────
+  api:
+    build:
+      context: ../docsearch-api
+      dockerfile: Dockerfile
+      args:
+        DOCKER_UID: ${DOCKER_UID:-1000}
+    container_name: docsearch-api
+    profiles: ["dev", "production"]
+    # Pas de --reload : le code vit dans docsearch-api, reconstruire
+    # l'image après une modification (docker compose build api)
+    command: uvicorn search_api:app --host 0.0.0.0 --port 8000
+    environment:
+      <<: *app-env
+    volumes:
+      # Nécessaire uniquement pour l'aperçu de documents (conversion PDF)
+      - documents:/documents:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - docsearch-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+
+  # ── Nginx (production uniquement) ─────────────────────────
+  # ── UI (interface web statique) ──────────────────────────────
+  ui:
+    build:
+      context: ../docsearch-ui
+      dockerfile: Dockerfile
+    container_name: docsearch-ui
+    profiles: ["dev", "production"]
+    ports:
+      - "8080:80"   # accès direct en dev ; en prod, passer par nginx (port 80/443)
+    networks:
+      - docsearch-net
+    restart: unless-stopped
+
+  # ── Nginx (reverse proxy : UI statique + API + SSL) ───────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: docsearch-nginx
+    profiles: ["production"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      ui:
+        condition: service_started
+    networks:
+      - docsearch-net
+    restart: unless-stopped
+
+# ── Volumes ───────────────────────────────────────────────────
+volumes:
+  es01_data:
+  es02_data:
+  es03_data:
+  kafka_data:
+  zookeeper_data:
+  zookeeper_logs:
+  redis_data:
+  documents:
+    driver: local
+    driver_opts:
+      type:   none
+      o:      bind
+      device: ${DOCS_PATH:-/documents}
+
+# ── Réseau ────────────────────────────────────────────────────
+networks:
+  docsearch-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

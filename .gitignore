@@ -1,0 +1,4 @@
+.env
+nginx/certs/
+*.tar.gz
+backups/

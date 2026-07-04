@@ -1,0 +1,95 @@
+# docsearch-infra
+
+Orchestration Docker Compose de **DocSearch** — c'est le dépôt à cloner en
+premier et celui qui lance l'ensemble du système.
+
+## Architecture multi-dépôts
+
+DocSearch est découpé en 5 dépôts indépendants :
+
+| Dépôt | Rôle | Cycle de vie |
+|---|---|---|
+| [docsearch-ingestion](../docsearch-ingestion) | Extraction, ACL, indexation | Évolue avec les formats de documents |
+| [docsearch-api](../docsearch-api) | API de recherche (FastAPI) | Évolue avec les besoins de recherche |
+| [docsearch-ui](../docsearch-ui) | Interface web statique | Évolue avec l'UX |
+| **docsearch-infra** (ce dépôt) | Orchestration, déploiement | Évolue rarement |
+| [docsearch-docs](../docsearch-docs) | Documents commerciaux | Géré par les équipes commerciales |
+
+**Convention de clonage** — tous les dépôts doivent être clonés côte à côte
+dans un même dossier parent, car `docker-compose.yml` référence les autres
+projets par chemin relatif (`../docsearch-ingestion`, `../docsearch-api`,
+`../docsearch-ui`) :
+
+```
+docsearch/
+├── docsearch-infra/       ← vous êtes ici, lancez manage.sh depuis ce dossier
+├── docsearch-ingestion/
+├── docsearch-api/
+├── docsearch-ui/
+└── docsearch-docs/
+```
+
+```bash
+mkdir docsearch && cd docsearch
+git clone <url>/docsearch-infra.git
+git clone <url>/docsearch-ingestion.git
+git clone <url>/docsearch-api.git
+git clone <url>/docsearch-ui.git
+git clone <url>/docsearch-docs.git
+
+cd docsearch-infra
+cp .env.example .env
+nano .env                    # adapter DOCS_PATH, DOCKER_UID, LDAP...
+chmod +x manage.sh
+
+./manage.sh start            # démarre tout (mode dev)
+./manage.sh init             # indexation initiale
+```
+
+## Pourquoi ce découpage
+
+- **Tokens/contexte réduits** — travailler sur l'indexation n'a plus besoin
+  de charger le code de l'API ni de l'UI dans le contexte de conversation
+- **Cycles de déploiement indépendants** — reconstruire l'API ne nécessite
+  pas de rebuild de l'ingestion (et inversement)
+- **Séparation des responsabilités** — l'API ne dépend d'aucun autre dépôt
+  (elle lit uniquement un ES déjà peuplé) ; l'ingestion ne dépend pas de
+  l'API
+
+## Commandes
+
+```bash
+./manage.sh start           # Mode dev : ES single-node, 1 worker
+./manage.sh start-prod      # Mode prod : cluster ES 3 nœuds + Nginx
+./manage.sh stop
+./manage.sh status
+./manage.sh logs <service>  # ex: api, worker, watcher, es01-dev
+./manage.sh init            # Indexation initiale
+./manage.sh scale-workers N
+./manage.sh backup
+./manage.sh reset           # ⚠️ supprime toutes les données
+```
+
+## Rebuild après modification d'un sous-projet
+
+```bash
+# Après une modification dans docsearch-ingestion :
+docker compose build worker watcher indexer-init
+docker compose up -d worker watcher
+
+# Après une modification dans docsearch-api :
+docker compose build api
+docker compose up -d api
+
+# Après une modification dans docsearch-ui :
+docker compose build ui
+docker compose up -d ui
+```
+
+## Stack technique
+
+Elasticsearch 9.4.3 · Apache Tika 3.3.1.0 · Kafka 8.3 (KRaft, sans
+Zookeeper) · Redis 7.2 · Nginx 1.27 · Python 3.12.
+
+Voir `guide_install_virtualbox.docx` dans `docsearch-docs` pour une
+installation pas à pas sur VM VirtualBox.

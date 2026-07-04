@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push: { branches: [main, develop] }
+  pull_request: { branches: [main] }
+
+jobs:
+  validate-compose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: docsearch-infra
+      # Clone les dépôts frères nécessaires à la résolution des build contexts
+      - uses: actions/checkout@v4
+        with: { repository: "${{ github.repository_owner }}/docsearch-ingestion", path: docsearch-ingestion }
+      - uses: actions/checkout@v4
+        with: { repository: "${{ github.repository_owner }}/docsearch-api", path: docsearch-api }
+      - uses: actions/checkout@v4
+        with: { repository: "${{ github.repository_owner }}/docsearch-ui", path: docsearch-ui }
+      - name: Validate compose syntax
+        working-directory: docsearch-infra
+        run: |
+          cp .env.example .env
+          docker compose config --quiet

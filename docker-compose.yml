@@ -209,6 +209,13 @@ services:
       KAFKA_INTER_BROKER_LISTENER_NAME:       PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE:        "true"
+      # Nombre de partitions par défaut pour les topics auto-créés.
+      # CRITIQUE pour le débit : le parallélisme d'un groupe de consumers
+      # Kafka est plafonné par le nombre de partitions du topic — avec
+      # 1 seule partition (défaut Confluent), un seul worker recevrait
+      # des messages quel que soit le nombre de réplicas démarrées.
+      # Valeur alignée sur le nombre max de workers attendu en production.
+      KAFKA_NUM_PARTITIONS:                    16
       KAFKA_LOG_RETENTION_HOURS:              24
       KAFKA_MESSAGE_MAX_BYTES:                10485760
       CLUSTER_ID:                             "MkU3OEVBNTcwNTJENDM2Qg"
@@ -244,6 +251,12 @@ services:
       retries: 3
 
   # ── Indexation initiale ───────────────────────────────────
+  # ── Producer (scan + publication Kafka) ──────────────────────
+  # Remplace l'ancienne indexation séquentielle (python indexer.py)
+  # par un simple scan qui publie chaque fichier sur Kafka — le
+  # travail lourd (Tika + ES) est ensuite fait en parallèle par les
+  # N réplicas du service "worker", pour un débit d'indexation
+  # nettement supérieur à un traitement séquentiel.
   indexer-init:
     build:
       context: ../docsearch-ingestion
@@ -252,7 +265,7 @@ services:
         DOCKER_UID: ${DOCKER_UID:-1000}
     container_name: docsearch-indexer-init
     profiles: ["init"]
-    command: python indexer.py
+    command: python producer.py
     environment:
       <<: *app-env
     volumes:
@@ -263,7 +276,9 @@ services:
     networks:
       - docsearch-net
 
-  # ── Workers (×8) ─────────────────────────────────────────
+  # ── Workers (parallélisme réel du débit d'indexation) ────────
+  # Ajuster le nombre de réplicas selon la charge :
+  #   ./manage.sh scale-workers 12   (recommandé en production, 4M docs)
   worker:
     build:
       context: ../docsearch-ingestion
@@ -285,7 +300,7 @@ services:
       - docsearch-net
     restart: unless-stopped
     deploy:
-      replicas: 1
+      replicas: 4
       resources:
         limits:
           cpus: "1.5"

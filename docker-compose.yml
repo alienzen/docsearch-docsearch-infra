@@ -350,6 +350,9 @@ services:
     profiles: ["dev", "production"]
     ports:
       - "8080:80"   # accès direct en dev ; en prod, passer par nginx (port 80/443)
+    depends_on:
+      api:
+        condition: service_healthy
     networks:
       - docsearch-net
     restart: unless-stopped

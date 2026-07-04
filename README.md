@@ -14,6 +14,7 @@ DocSearch est découpé en 5 dépôts indépendants :
 | [docsearch-ui](../docsearch-ui) | Interface web statique | Évolue avec l'UX |
 | **docsearch-infra** (ce dépôt) | Orchestration, déploiement | Évolue rarement |
 | [docsearch-docs](../docsearch-docs) | Documents commerciaux | Géré par les équipes commerciales |
+| [docsearch-dataset-generator](../docsearch-dataset-generator) | Génération de jeux de test | Utilisé ponctuellement, hors production |
 
 **Convention de clonage** — tous les dépôts doivent être clonés côte à côte
 dans un même dossier parent, car `docker-compose.yml` référence les autres

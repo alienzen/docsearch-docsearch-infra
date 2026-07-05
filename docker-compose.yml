@@ -25,6 +25,7 @@ x-tika-common: &tika-common
 
 x-app-env: &app-env
   ES_HOST:         http://es01-dev:9200
+  ES_INDEX:        ${ES_INDEX:-documents}
   TIKA_SERVERS:    http://tika1:9998,http://tika2:9998,http://tika3:9998,http://tika4:9998
   KAFKA_BOOTSTRAP: kafka:9092
   REDIS_HOST:      redis

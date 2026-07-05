@@ -12,6 +12,17 @@ set -euo pipefail
 COMPOSE="docker compose"
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 
+# Charge .env dans le shell de manage.sh lui-même (docker compose le lit
+# déjà automatiquement pour les substitutions dans docker-compose.yml,
+# mais les commandes curl directes ci-dessous — status, get-config...
+# tournent sur l'hôte et ont besoin de ces variables explicitement).
+if [ -f .env ]; then
+    set -a
+    source .env
+    set +a
+fi
+ES_INDEX="${ES_INDEX:-documents}"
+
 log()  { echo -e "${GREEN}[DocSearch]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()  { echo -e "${RED}[ERREUR]${NC} $*"; exit 1; }
@@ -82,7 +93,7 @@ case "${1:-help}" in
       || warn "ES inaccessible"
     echo ""
     log "Documents indexés :"
-    curl -sf "http://localhost:9200/documents/_count?pretty" 2>/dev/null \
+    curl -sf "http://localhost:9200/${ES_INDEX}/_count?pretty" 2>/dev/null \
       || warn "Index non trouvé"
     ;;
 
@@ -122,7 +133,7 @@ case "${1:-help}" in
     fi
     log "Publication terminée. L'indexation se fait maintenant en arrière-plan par les $WORKER_COUNT worker(s) actifs."
     log "Suivre l'avancement : ./manage.sh logs worker"
-    log "Vérifier le nombre de documents indexés : curl http://localhost:9200/documents/_count?pretty"
+    log "Vérifier le nombre de documents indexés : curl http://localhost:9200/${ES_INDEX}/_count?pretty"
     ;;
 
   scale-workers)

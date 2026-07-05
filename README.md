@@ -99,6 +99,24 @@ docker compose build ui
 docker compose up -d ui
 ```
 
+## Nom de l'index Elasticsearch
+
+`ES_INDEX` (défaut `documents`) doit être **identique** entre tous les
+services — `docsearch-ingestion` (qui écrit) et `docsearch-api` (qui
+lit) doivent pointer vers le même index, sinon l'API renverra
+silencieusement zéro résultat alors que l'indexation semble fonctionner.
+Ce fichier `docker-compose.yml` propage `ES_INDEX` à tous les services
+via `x-app-env` — il suffit de le définir une seule fois dans `.env`.
+
+```bash
+# .env
+ES_INDEX=documents_prod
+```
+
+⚠️ Changer cette valeur sur un environnement déjà en production ne
+migre pas les données : le nouvel index démarre vide. Prévoir une
+réindexation complète (`./manage.sh init`) après tout changement.
+
 ## Stack technique
 
 Elasticsearch 9.4.3 · Apache Tika 3.3.1.0 · Kafka 8.3 (KRaft, sans

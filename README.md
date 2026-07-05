@@ -99,6 +99,27 @@ docker compose build ui
 docker compose up -d ui
 ```
 
+## Chemin des documents (hôte vs conteneur)
+
+Deux variables distinctes, à ne pas confondre :
+
+| Variable | Rôle |
+|---|---|
+| `DOCS_PATH` | Dossier réel sur l'**hôte** contenant les documents |
+| `DOCS_FOLDER` | Chemin correspondant **à l'intérieur des conteneurs** |
+
+`DOCS_FOLDER` pilote à la fois le point de montage du volume Docker
+(`documents:${DOCS_FOLDER:-/documents}:ro`) et la variable applicative
+lue par le code Python (`os.getenv("DOCS_FOLDER", ...)`) — **les deux
+proviennent de la même valeur**, elles ne peuvent donc jamais diverger.
+C'est volontaire : changer l'un sans l'autre reproduirait exactement le
+bug déjà rencontré par le passé (le code cherchait dans un chemin
+différent de celui réellement monté, index vide sans erreur visible).
+
+En pratique, seul `DOCS_PATH` a besoin d'être changé dans l'immense
+majorité des cas — `DOCS_FOLDER` ne sert que si `/documents` entre en
+conflit avec un autre point de montage à l'intérieur des conteneurs.
+
 ## Nom de l'index Elasticsearch
 
 `ES_INDEX` (défaut `documents`) doit être **identique** entre tous les

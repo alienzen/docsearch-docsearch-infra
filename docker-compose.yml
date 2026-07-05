@@ -29,7 +29,7 @@ x-app-env: &app-env
   TIKA_SERVERS:    http://tika1:9998,http://tika2:9998,http://tika3:9998,http://tika4:9998
   KAFKA_BOOTSTRAP: kafka:9092
   REDIS_HOST:      redis
-  DOCS_FOLDER:     /documents
+  DOCS_FOLDER:     ${DOCS_FOLDER:-/documents}
   LDAP_ENABLED:    ${LDAP_ENABLED:-false}
   LDAP_HOST:       ${LDAP_HOST:-}
   LDAP_BASE:       ${LDAP_BASE:-}
@@ -273,7 +273,7 @@ services:
     environment:
       <<: *app-env
     volumes:
-      - documents:/documents:ro
+      - documents:${DOCS_FOLDER:-/documents}:ro
     depends_on:
       kafka:
         condition: service_healthy
@@ -294,7 +294,7 @@ services:
     environment:
       <<: *app-env
     volumes:
-      - documents:/documents:ro
+      - documents:${DOCS_FOLDER:-/documents}:ro
     depends_on:
       kafka:
         condition: service_healthy
@@ -323,7 +323,7 @@ services:
     environment:
       <<: *app-env
     volumes:
-      - documents:/documents:ro
+      - documents:${DOCS_FOLDER:-/documents}:ro
     depends_on:
       kafka:
         condition: service_started
@@ -347,7 +347,7 @@ services:
       <<: *app-env
     volumes:
       # Nécessaire uniquement pour l'aperçu de documents (conversion PDF)
-      - documents:/documents:ro
+      - documents:${DOCS_FOLDER:-/documents}:ro
     ports:
       - "8000:8000"
     depends_on:

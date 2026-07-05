@@ -120,6 +120,22 @@ En pratique, seul `DOCS_PATH` a besoin d'être changé dans l'immense
 majorité des cas — `DOCS_FOLDER` ne sert que si `/documents` entre en
 conflit avec un autre point de montage à l'intérieur des conteneurs.
 
+## Panneau d'administration
+
+Accessible sur `/admin.html`, réservé aux membres du groupe LDAP/AD
+défini par `ADMIN_GROUP` (nécessite `LDAP_ENABLED=true`) :
+
+```bash
+# .env
+LDAP_ENABLED=true
+ADMIN_GROUP=docsearch-admins
+```
+
+Permet de consulter l'état des composants, ajuster la configuration
+(types de fichiers, paramètres opérationnels, filtres de chemin) et
+déclencher un scan ou une purge — sans jamais toucher à Docker. Voir
+le README de `docsearch-api` pour le détail des routes `/admin/*`.
+
 ## Nom de l'index Elasticsearch
 
 `ES_INDEX` (défaut `documents`) doit être **identique** entre tous les

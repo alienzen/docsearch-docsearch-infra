@@ -170,6 +170,59 @@ print(json.dumps(get_runtime_config(), indent=2, ensure_ascii=False))
 "
     ;;
 
+  exclude-path)
+    PATTERN="${2:-}"
+    if [ -z "$PATTERN" ]; then
+        err "Usage : ./manage.sh exclude-path <motif>
+  Exemples : ./manage.sh exclude-path finance/confidentiel
+             ./manage.sh exclude-path '*/tmp'
+             ./manage.sh exclude-path '*.cache'"
+    fi
+    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from path_filter import add_excluded
+import json
+print(json.dumps(add_excluded('$PATTERN'), indent=2, ensure_ascii=False))
+"
+    log "Motif d'exclusion ajouté : '$PATTERN' — effectif sous 10s pour les scans/watcher déjà en cours."
+    warn "Les documents déjà indexés dans ce sous-dossier NE SONT PAS supprimés automatiquement."
+    ;;
+
+  include-path)
+    PATTERN="${2:-}"
+    if [ -z "$PATTERN" ]; then
+        err "Usage : ./manage.sh include-path <motif>
+  Bascule en liste blanche : si au moins un motif est inclus, SEULS
+  les chemins correspondants sont indexés (l'exclusion reste prioritaire)."
+    fi
+    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from path_filter import add_included
+import json
+print(json.dumps(add_included('$PATTERN'), indent=2, ensure_ascii=False))
+"
+    log "Motif d'inclusion ajouté : '$PATTERN'."
+    ;;
+
+  remove-path-filter)
+    PATTERN="${2:-}"
+    if [ -z "$PATTERN" ]; then
+        err "Usage : ./manage.sh remove-path-filter <motif>"
+    fi
+    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from path_filter import remove_filter
+import json
+print(json.dumps(remove_filter('$PATTERN'), indent=2, ensure_ascii=False))
+"
+    log "Motif '$PATTERN' retiré (des deux listes s'il y était)."
+    ;;
+
+  list-path-filters)
+    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from path_filter import get_config
+import json
+print(json.dumps(get_config(), indent=2, ensure_ascii=False))
+"
+    ;;
+
   set-filetype)
     EXT="${2:-}"
     if [ -z "$EXT" ]; then
@@ -248,6 +301,10 @@ print(json.dumps(get_config(), indent=2, ensure_ascii=False))
     echo "                    Modifier un paramètre opérationnel (archive_max_depth,"
     echo "                    worker_flush_interval, watcher_poll_interval, etc.)"
     echo "    get-config      Afficher tous les paramètres opérationnels actuels"
+    echo "    exclude-path <motif>       Exclure un sous-dossier de l'indexation (glob)"
+    echo "    include-path <motif>       Passer en liste blanche (n'indexer QUE ces chemins)"
+    echo "    remove-path-filter <motif> Retirer un motif d'inclusion/exclusion"
+    echo "    list-path-filters          Afficher les filtres de chemin actuels"
     echo "    backup          Snapshot Elasticsearch"
     echo "    reset           Supprimer toutes les données (irréversible)"
     echo ""

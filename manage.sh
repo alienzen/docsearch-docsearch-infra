@@ -131,6 +131,34 @@ case "${1:-help}" in
     $COMPOSE --profile dev up -d --scale worker="$N"
     ;;
 
+  set-config)
+    KEY="${2:-}"
+    VALUE="${3:-}"
+    if [ -z "$KEY" ] || [ -z "$VALUE" ]; then
+        err "Usage : ./manage.sh set-config <clé> <valeur>
+  Clés disponibles : archive_max_files, archive_max_total_size_mb,
+                      archive_max_depth, worker_batch_size,
+                      worker_flush_interval, watcher_poll_interval"
+    fi
+    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from runtime_config import set_param
+import json
+cfg = set_param('$KEY', '$VALUE')
+print(json.dumps(cfg, indent=2, ensure_ascii=False))
+"
+    log "Paramètre '$KEY' mis à jour. Pris en compte sous 10s par worker/producer,"
+    log "sous 5s par watcher (watcher_poll_interval redémarre son observateur automatiquement)."
+    warn "worker_batch_size (Kafka max_poll_records) nécessite un redémarrage du worker pour être pleinement effectif."
+    ;;
+
+  get-config)
+    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from runtime_config import get_runtime_config
+import json
+print(json.dumps(get_runtime_config(), indent=2, ensure_ascii=False))
+"
+    ;;
+
   set-filetype)
     EXT="${2:-}"
     if [ -z "$EXT" ]; then
@@ -205,6 +233,10 @@ print(json.dumps(get_config(), indent=2, ensure_ascii=False))
     echo "                    Activer/désactiver un type de fichier ou fixer sa taille max"
     echo "                    (effectif immédiatement, sans redémarrage — cache 10s max)"
     echo "    get-filetypes   Afficher la configuration actuelle par type de fichier"
+    echo "    set-config <clé> <valeur>"
+    echo "                    Modifier un paramètre opérationnel (archive_max_depth,"
+    echo "                    worker_flush_interval, watcher_poll_interval, etc.)"
+    echo "    get-config      Afficher tous les paramètres opérationnels actuels"
     echo "    backup          Snapshot Elasticsearch"
     echo "    reset           Supprimer toutes les données (irréversible)"
     echo ""

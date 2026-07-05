@@ -17,11 +17,14 @@ x-tika-common: &tika-common
   networks:
     - docsearch-net
   restart: unless-stopped
-  healthcheck:
-    test: ["CMD", "curl", "-f", "http://localhost:9998/tika"]
-    interval: 30s
-    timeout: 10s
-    retries: 3
+  # Pas de healthcheck Docker ici : les images officielles apache/tika
+  # n'embarquent ni curl, ni wget, ni /dev/tcp de façon fiable (ticket
+  # connu : https://issues.apache.org/jira/browse/TIKA-3333) — un
+  # healthcheck basé sur ces outils échoue systématiquement même
+  # quand Tika fonctionne correctement, produisant un faux "unhealthy"
+  # permanent. Le vrai suivi de santé se fait depuis l'extérieur, en
+  # HTTP, via docsearch-api (voir cluster_status.py:check_tika, exposé
+  # dans le panneau d'administration /admin/status).
 
 x-app-env: &app-env
   ES_HOST:         http://es01-dev:9200

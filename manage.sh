@@ -17,9 +17,25 @@ GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 # mais les commandes curl directes ci-dessous — status, get-config...
 # tournent sur l'hôte et ont besoin de ces variables explicitement).
 if [ -f .env ]; then
-    set -a
-    source .env
-    set +a
+    # Ne JAMAIS faire "source .env" : bash exécuterait le fichier comme
+    # un script, et toute valeur contenant un espace non protégé par
+    # des guillemets (ex: ES_JAVA_OPTS=-Xms1g -Xmx1g, courant et valide
+    # pour Docker Compose) casse tout — bash lit "-Xmx1g" comme une
+    # commande à exécuter après l'assignation, d'où l'erreur
+    # ".env: ligne N: -Xmx1g: commande introuvable".
+    # On analyse donc le fichier ligne par ligne sans jamais l'exécuter.
+    while IFS='=' read -r key value; do
+        # Ignorer commentaires et lignes vides
+        case "$key" in
+            ''|'#'*) continue ;;
+        esac
+        key="$(echo "$key" | xargs)"   # espaces éventuels autour de la clé
+        [ -z "$key" ] && continue
+        # Retirer des guillemets englobants s'il y en a (KEY="valeur")
+        value="${value%\"}"; value="${value#\"}"
+        value="${value%\'}"; value="${value#\'}"
+        export "$key=$value"
+    done < .env
 fi
 ES_INDEX="${ES_INDEX:-documents}"
 

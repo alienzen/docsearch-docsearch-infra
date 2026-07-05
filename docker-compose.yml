@@ -356,7 +356,13 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 20s
       timeout: 5s
-      retries: 3
+      retries: 5
+      # start_period : les échecs pendant cette fenêtre ne comptent pas
+      # dans les tentatives. Indispensable ici car /health interroge ES,
+      # qui peut mettre 60-90s à démarrer (nœud unique, VM contrainte) —
+      # sans cela, l'API est déclarée "unhealthy" avant même qu'ES soit
+      # prêt, ce qui bloque les services qui en dépendent (ui, nginx).
+      start_period: 90s
 
   # ── Nginx (production uniquement) ─────────────────────────
   # ── UI (interface web statique) ──────────────────────────────

@@ -131,6 +131,43 @@ case "${1:-help}" in
     $COMPOSE --profile dev up -d --scale worker="$N"
     ;;
 
+  set-filetype)
+    EXT="${2:-}"
+    if [ -z "$EXT" ]; then
+        err "Usage : ./manage.sh set-filetype <extension> [--enabled true|false] [--max-size Mo]"
+    fi
+    shift 2
+    ENABLED_ARG=""
+    MAXSIZE_ARG=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --enabled)  ENABLED_ARG="$2"; shift 2 ;;
+            --max-size) MAXSIZE_ARG="$2"; shift 2 ;;
+            *) err "Option inconnue : $1" ;;
+        esac
+    done
+
+    PY_ARGS="extension=\"$EXT\""
+    [ -n "$ENABLED_ARG" ]  && PY_ARGS="$PY_ARGS, enabled=$([ "$ENABLED_ARG" = "true" ] && echo True || echo False)"
+    [ -n "$MAXSIZE_ARG" ]  && PY_ARGS="$PY_ARGS, max_size_mb=$MAXSIZE_ARG"
+
+    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from filetype_config import set_filetype
+import json
+cfg = set_filetype($PY_ARGS)
+print(json.dumps(cfg, indent=2, ensure_ascii=False))
+"
+    log "Configuration mise à jour — effective immédiatement (cache de ${FILETYPE_CONFIG_CACHE_TTL:-10}s max) sur les workers/watcher/producer déjà démarrés."
+    ;;
+
+  get-filetypes)
+    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from filetype_config import get_config
+import json
+print(json.dumps(get_config(), indent=2, ensure_ascii=False))
+"
+    ;;
+
   reset)
     warn "⚠️  Cette commande supprime TOUTES les données."
     read -rp "Confirmer ? (oui/non) : " CONFIRM
@@ -164,6 +201,10 @@ case "${1:-help}" in
     echo "    logs [service]  Logs en temps réel"
     echo "    init [sous-dossier]  Indexation (complète, ou d'un sous-dossier de /documents)"
     echo "    scale-workers N Ajuster le nombre de workers"
+    echo "    set-filetype <ext> [--enabled true|false] [--max-size Mo]"
+    echo "                    Activer/désactiver un type de fichier ou fixer sa taille max"
+    echo "                    (effectif immédiatement, sans redémarrage — cache 10s max)"
+    echo "    get-filetypes   Afficher la configuration actuelle par type de fichier"
     echo "    backup          Snapshot Elasticsearch"
     echo "    reset           Supprimer toutes les données (irréversible)"
     echo ""

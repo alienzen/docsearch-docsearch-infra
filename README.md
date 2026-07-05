@@ -44,8 +44,19 @@ nano .env                    # adapter DOCS_PATH, DOCKER_UID, LDAP...
 chmod +x manage.sh
 
 ./manage.sh start            # démarre tout (mode dev)
-./manage.sh init             # indexation initiale
+./manage.sh init             # publie les fichiers sur Kafka (voir note ci-dessous)
 ```
+
+> ⚠️ **`init` ne fait qu'écrire sur Kafka** — l'indexation réelle est
+> faite en arrière-plan par les réplicas du service `worker`, qui
+> doivent déjà tourner (démarrés par `start`/`start-prod`). Si `init`
+> est lancé alors qu'aucun worker n'est actif (stack jamais démarré,
+> ou arrêté depuis un `stop`/`reset`), l'index est créé mais reste
+> vide, sans erreur visible — `manage.sh` vérifie maintenant ce cas
+> et refuse de continuer si Kafka ou les workers ne sont pas détectés.
+> Suivre la progression avec `./manage.sh logs worker` et
+> `curl http://localhost:9200/documents/_count?pretty`.
+
 
 ## Pourquoi ce découpage
 

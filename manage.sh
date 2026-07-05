@@ -97,14 +97,32 @@ case "${1:-help}" in
 
   init)
     SOUS_DOSSIER="${2:-}"
+
+    # Garde-fou : depuis le passage au pipeline producer/workers,
+    # './manage.sh init' ne fait plus qu'écrire sur Kafka — ce sont
+    # les réplicas du service "worker" qui font l'indexation réelle.
+    # S'ils ne tournent pas déjà (stack jamais démarré, ou arrêté
+    # depuis), le topic se remplit mais rien ne le consomme : l'index
+    # est créé mais reste vide, sans aucune erreur visible.
+    WORKER_COUNT=$($COMPOSE ps --status running --format '{{.Name}}' worker 2>/dev/null | wc -l | tr -d ' ')
+    KAFKA_RUNNING=$($COMPOSE ps --status running --format '{{.Name}}' kafka 2>/dev/null | wc -l | tr -d ' ')
+
+    if [ "$KAFKA_RUNNING" -eq 0 ] || [ "$WORKER_COUNT" -eq 0 ]; then
+        err "Aucun worker (ou Kafka) en cours d'exécution — les messages publiés ne seraient consommés par personne.
+  Lancez d'abord le stack : sudo ./manage.sh start   (ou start-prod)
+  puis relancez              : sudo ./manage.sh init"
+    fi
+
     if [ -n "$SOUS_DOSSIER" ]; then
         log "Réindexation du sous-dossier : $SOUS_DOSSIER"
         $COMPOSE --profile init run --build --rm indexer-init python producer.py "$SOUS_DOSSIER"
     else
-        log "Lancement de l'indexation initiale (dossier complet)..."
+        log "Publication des fichiers sur Kafka (dossier complet)..."
         $COMPOSE --profile init up --build indexer-init
     fi
-    log "Publication terminée — suivre l'avancement avec : ./manage.sh logs worker"
+    log "Publication terminée. L'indexation se fait maintenant en arrière-plan par les $WORKER_COUNT worker(s) actifs."
+    log "Suivre l'avancement : ./manage.sh logs worker"
+    log "Vérifier le nombre de documents indexés : curl http://localhost:9200/documents/_count?pretty"
     ;;
 
   scale-workers)

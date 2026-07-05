@@ -223,6 +223,41 @@ print(json.dumps(get_config(), indent=2, ensure_ascii=False))
 "
     ;;
 
+  purge-path)
+    PATTERN="${2:-}"
+    if [ -z "$PATTERN" ]; then
+        err "Usage : ./manage.sh purge-path <motif>
+  Supprime de l'INDEX (pas du disque) les documents déjà indexés dont
+  le chemin correspond au motif — même syntaxe glob que exclude-path.
+  Utile après un exclude-path : ce dernier n'agit que sur les futurs
+  passages, purge-path nettoie l'existant.
+  Exemples :
+    ./manage.sh purge-path finance/confidentiel
+    ./manage.sh purge-path '*/tmp'"
+    fi
+
+    log "Aperçu (aucune suppression) — documents déjà indexés correspondant à '$PATTERN' :"
+    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from indexer import purge_path
+n = purge_path('$PATTERN', dry_run=True)
+print(f'{n} document(s) correspondent au motif.')
+"
+
+    warn "Cette suppression est IRRÉVERSIBLE (seul l'index est purgé, les fichiers sur le disque ne sont pas touchés — une réindexation les retrouvera si le filtre est retiré ensuite)."
+    read -rp "Confirmer la suppression ? (oui/non) : " REPLY_CONFIRM
+    if [ "$REPLY_CONFIRM" != "oui" ]; then
+        log "Annulé."
+        exit 0
+    fi
+
+    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from indexer import purge_path
+n = purge_path('$PATTERN', dry_run=False)
+print(f'{n} document(s) supprimé(s) de l\'index.')
+"
+    log "Purge terminée."
+    ;;
+
   set-filetype)
     EXT="${2:-}"
     if [ -z "$EXT" ]; then
@@ -305,6 +340,8 @@ print(json.dumps(get_config(), indent=2, ensure_ascii=False))
     echo "    include-path <motif>       Passer en liste blanche (n'indexer QUE ces chemins)"
     echo "    remove-path-filter <motif> Retirer un motif d'inclusion/exclusion"
     echo "    list-path-filters          Afficher les filtres de chemin actuels"
+    echo "    purge-path <motif>         Supprimer de l'index les documents déjà"
+    echo "                               indexés correspondant au motif (avec confirmation)"
     echo "    backup          Snapshot Elasticsearch"
     echo "    reset           Supprimer toutes les données (irréversible)"
     echo ""

@@ -1,0 +1,42 @@
+# ─────────────────────────────────────────────────────────────
+#  ES-VOTING — à déployer sur es-voting (SSD 256 Go)
+#
+#  Nœud ES "voting_only" : master-éligible pour le quorum, mais SANS
+#  data. Indispensable avec seulement 2 nœuds de données (es-data-1/2) :
+#  si l'un des deux tombe, le survivant n'a que 1 voix sur 2 — pas de
+#  majorité, pas d'élection de master possible (split-brain) sans ce
+#  3e nœud arbitre. Charge quasi nulle (pas de shard stocké ici) —
+#  cohabite sans souci avec Kibana sur la même machine.
+# ─────────────────────────────────────────────────────────────
+services:
+  es-voting:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.4.3
+    container_name: docsearch-es03-voting
+    network_mode: host
+    environment:
+      - node.name=es03-voting
+      - cluster.name=docsearch-cluster
+      - node.roles=master,voting_only
+      - discovery.seed_hosts=${ES_DATA1_IP}:9300,${ES_DATA2_IP}:9300,${ES_VOTING_IP}:9300
+      - cluster.initial_master_nodes=es01,es02,es03-voting
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile:  { soft: 65536, hard: 65536 }
+    volumes:
+      - es_voting_data:/usr/share/elasticsearch/data
+    restart: unless-stopped
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:9.4.3
+    container_name: docsearch-kibana
+    network_mode: host
+    environment:
+      - ELASTICSEARCH_HOSTS=http://${ES_DATA1_IP}:9200
+      - SERVER_PORT=5601
+    restart: unless-stopped
+
+volumes:
+  es_voting_data:

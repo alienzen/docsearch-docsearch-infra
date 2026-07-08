@@ -1,0 +1,47 @@
+# ─────────────────────────────────────────────────────────────
+#  KAFKA — à déployer sur la machine "kafka" (SSD 256 Go)
+#
+#  Broker unique (KRaft, sans Zookeeper) — cohérent avec l'usage
+#  actuel (replication factor 1, acks=1) : Kafka sert ici de file de
+#  travail pour l'indexation, pas de système d'enregistrement durable
+#  (un message perdu est simplement rattrapé au prochain scan complet,
+#  voir docsearch-ingestion/producer.py). C'est un point de défaillance
+#  unique pour l'INGESTION — la RECHERCHE (API/ES) continue de
+#  fonctionner normalement si cette machine tombe.
+#
+#  network_mode: host — l'annonce d'écoute (KAFKA_ADVERTISED_LISTENERS)
+#  doit être l'IP réelle de la machine pour être joignable par les
+#  workers/producer tournant sur les machines d'ingestion.
+# ─────────────────────────────────────────────────────────────
+services:
+  kafka:
+    image: confluentinc/cp-kafka:8.3.0
+    container_name: docsearch-kafka
+    network_mode: host
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@${KAFKA_IP}:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://${KAFKA_IP}:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_NUM_PARTITIONS: ${KAFKA_NUM_PARTITIONS:-16}
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_MESSAGE_MAX_BYTES: 10485760
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qg"
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  kafka_data:

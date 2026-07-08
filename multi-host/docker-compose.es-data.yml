@@ -1,0 +1,42 @@
+# ─────────────────────────────────────────────────────────────
+#  ES-DATA — à déployer sur es-data-1 ET es-data-2 (SSD 4 To)
+#
+#  NODE_NAME diffère par machine, passé en variable d'environnement
+#  AU LANCEMENT (pas dans .env, qui lui est identique partout) :
+#
+#    es-data-1 : NODE_NAME=es01 docker compose -f docker-compose.es-data.yml up -d
+#    es-data-2 : NODE_NAME=es02 docker compose -f docker-compose.es-data.yml up -d
+#
+#  network_mode: host — évite le mapping NAT du port de transport
+#  (9300), qui complique la découverte entre machines physiques
+#  distinctes. Le conteneur partage directement l'interface réseau
+#  de l'hôte : "ports:" n'a plus de sens ici et n'apparaît pas.
+# ─────────────────────────────────────────────────────────────
+services:
+  es-data:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.4.3
+    container_name: docsearch-${NODE_NAME:?définir NODE_NAME=es01 ou es02}
+    network_mode: host
+    environment:
+      - node.name=${NODE_NAME}
+      - cluster.name=docsearch-cluster
+      - node.roles=master,data
+      # Les 3 nœuds master-éligibles du cluster (2 data + 1 voting-only) :
+      - discovery.seed_hosts=${ES_DATA1_IP}:9300,${ES_DATA2_IP}:9300,${ES_VOTING_IP}:9300
+      # Utilisé UNIQUEMENT au tout premier démarrage du cluster (bootstrap) :
+      - cluster.initial_master_nodes=es01,es02,es03-voting
+      - bootstrap.memory_lock=true
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=${ES_JAVA_OPTS_DATA:--Xms7g -Xmx7g}"
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+      nofile:  { soft: 65536, hard: 65536 }
+    volumes:
+      - ${ES_DATA_HOST_PATH:-/data/es}:/usr/share/elasticsearch/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health | grep -v '\"status\":\"red\"'"]
+      interval: 20s
+      timeout: 10s
+      retries: 5
+      start_period: 90s

@@ -1,0 +1,67 @@
+# ─────────────────────────────────────────────────────────────
+#  INGEST1-EXTRA — à combiner avec docker-compose.ingest.yml
+#  UNIQUEMENT sur ingest-1 :
+#
+#    docker compose -f docker-compose.ingest.yml \
+#                    -f docker-compose.ingest1-extra.yml up -d
+#
+#  watcher (temps réel) et indexer-init (scan bulk à la demande) sont
+#  des services SINGLETONS — une seule instance suffit pour tout le
+#  cluster, pas la peine de les dupliquer sur les 3 machines
+#  d'ingestion. Ils cohabitent avec les Tika/workers d'ingest-1 sans
+#  souci (charge marginale par rapport à Tika).
+#
+#  Remarque : les anchors YAML (x-worker-env) ne se propagent pas
+#  entre fichiers compose distincts — l'environnement est donc
+#  redéfini ici explicitement plutôt que réutilisé depuis le fichier
+#  de base.
+# ─────────────────────────────────────────────────────────────
+x-shared-env: &shared-env
+  ES_HOST:         http://${ES_DATA1_IP}:9200
+  ES_INDEX:        ${ES_INDEX:-documents}
+  DEFAULT_SOURCE_SUBFOLDER: ${DEFAULT_SOURCE_SUBFOLDER:-documents}
+  ES_SEARCH_ALIAS: ${ES_SEARCH_ALIAS:-docsearch-all}
+  KAFKA_BOOTSTRAP: ${KAFKA_IP}:9092
+  REDIS_HOST:      ${FRONTEND_IP}
+  SOURCES_MOUNT:   ${SOURCES_MOUNT:-/sources}
+  WATCHER_POLL_INTERVAL: ${WATCHER_POLL_INTERVAL:-10}
+  ARCHIVE_MAX_FILES:      ${ARCHIVE_MAX_FILES:-5000}
+  ARCHIVE_MAX_TOTAL_SIZE_MB: ${ARCHIVE_MAX_TOTAL_SIZE_MB:-1000}
+  ARCHIVE_MAX_DEPTH:      ${ARCHIVE_MAX_DEPTH:-1}
+  FILETYPE_CONFIG_CACHE_TTL: ${FILETYPE_CONFIG_CACHE_TTL:-10}
+  RUNTIME_CONFIG_CACHE_TTL:  ${RUNTIME_CONFIG_CACHE_TTL:-10}
+  PATHFILTER_CACHE_TTL:      ${PATHFILTER_CACHE_TTL:-10}
+  SOURCES_CONFIG_CACHE_TTL:  ${SOURCES_CONFIG_CACHE_TTL:-10}
+
+services:
+  watcher:
+    build:
+      context: ../../docsearch-ingestion
+      dockerfile: Dockerfile
+      args:
+        DOCKER_UID: ${DOCKER_UID:-1000}
+    container_name: docsearch-watcher
+    command: python watcher.py
+    environment:
+      <<: *shared-env
+    volumes:
+      - sources:${SOURCES_MOUNT:-/sources}:ro
+    networks: [ingest-net]
+    restart: unless-stopped
+
+  # Pas de "restart" ni de service persistant : invoqué à la demande
+  # via  docker compose -f ... -f ... run --rm indexer-init python producer.py
+  indexer-init:
+    build:
+      context: ../../docsearch-ingestion
+      dockerfile: Dockerfile
+      args:
+        DOCKER_UID: ${DOCKER_UID:-1000}
+    container_name: docsearch-indexer-init
+    profiles: ["init"]
+    command: python producer.py
+    environment:
+      <<: *shared-env
+    volumes:
+      - sources:${SOURCES_MOUNT:-/sources}:ro
+    networks: [ingest-net]

@@ -1,0 +1,83 @@
+# ─────────────────────────────────────────────────────────────
+#  INGEST — à déployer sur ingest-1, ingest-2 ET ingest-3 (SSD 256 Go)
+#  2× Tika + N workers par machine (6 Tika + 9 workers au total avec
+#  WORKERS_PER_INGEST_NODE=3) — CPU-bound, sans état, jamais colocalisé
+#  avec ES (une rafale Tika ne doit jamais faire concurrence au heap/GC
+#  d'un nœud ES).
+#
+#  Identique sur les 3 machines (pas de paramètre par nœud requis :
+#  chaque Docker est indépendant, les 2 instances Tika locales portent
+#  toujours les mêmes noms/ports 9998/9999 en interne à leur propre
+#  machine).
+# ─────────────────────────────────────────────────────────────
+x-tika-common: &tika-common
+  image: apache/tika:3.3.1.0-full
+  networks: [ingest-net]
+  restart: unless-stopped
+  # Pas de healthcheck Docker — voir docker-compose.yml original
+  # (images apache/tika sans curl/wget fiable, TIKA-3333).
+
+x-worker-env: &worker-env
+  ES_HOST:         http://${ES_DATA1_IP}:9200
+  ES_INDEX:        ${ES_INDEX:-documents}
+  DEFAULT_SOURCE_SUBFOLDER: ${DEFAULT_SOURCE_SUBFOLDER:-documents}
+  ES_SEARCH_ALIAS: ${ES_SEARCH_ALIAS:-docsearch-all}
+  KAFKA_BOOTSTRAP: ${KAFKA_IP}:9092
+  REDIS_HOST:      ${FRONTEND_IP}
+  SOURCES_MOUNT:   ${SOURCES_MOUNT:-/sources}
+  # Les 6 instances Tika du cluster (2 par machine d'ingestion) — un
+  # worker peut appeler n'importe laquelle (random.choice côté worker.py),
+  # ce qui répartit la charge même entre machines.
+  TIKA_SERVERS: "http://${INGEST1_IP}:9998,http://${INGEST1_IP}:9999,http://${INGEST2_IP}:9998,http://${INGEST2_IP}:9999,http://${INGEST3_IP}:9998,http://${INGEST3_IP}:9999"
+  ARCHIVE_MAX_FILES:      ${ARCHIVE_MAX_FILES:-5000}
+  ARCHIVE_MAX_TOTAL_SIZE_MB: ${ARCHIVE_MAX_TOTAL_SIZE_MB:-1000}
+  ARCHIVE_MAX_DEPTH:      ${ARCHIVE_MAX_DEPTH:-1}
+  WORKER_FLUSH_INTERVAL:  ${WORKER_FLUSH_INTERVAL:-10}
+  WORKER_BATCH_SIZE:      ${WORKER_BATCH_SIZE:-200}
+  FILETYPE_CONFIG_CACHE_TTL: ${FILETYPE_CONFIG_CACHE_TTL:-10}
+  RUNTIME_CONFIG_CACHE_TTL:  ${RUNTIME_CONFIG_CACHE_TTL:-10}
+  PATHFILTER_CACHE_TTL:      ${PATHFILTER_CACHE_TTL:-10}
+  SOURCES_CONFIG_CACHE_TTL:  ${SOURCES_CONFIG_CACHE_TTL:-10}
+
+services:
+  tika-a:
+    <<: *tika-common
+    container_name: docsearch-tika-a
+    ports: ["9998:9998"]
+
+  tika-b:
+    <<: *tika-common
+    container_name: docsearch-tika-b
+    ports: ["9999:9998"]
+
+  worker:
+    build:
+      context: ../../docsearch-ingestion
+      dockerfile: Dockerfile
+      args:
+        DOCKER_UID: ${DOCKER_UID:-1000}
+    environment:
+      <<: *worker-env
+    command: python worker.py
+    volumes:
+      - sources:${SOURCES_MOUNT:-/sources}:ro
+    networks: [ingest-net]
+    restart: unless-stopped
+    deploy:
+      replicas: ${WORKERS_PER_INGEST_NODE:-3}
+      resources:
+        limits:
+          cpus: "1.2"
+          memory: 1G
+
+volumes:
+  sources:
+    driver: local
+    driver_opts:
+      type:   none
+      o:      bind,ro
+      device: ${SOURCES_ROOT:-/data/docsearch-sources}
+
+networks:
+  ingest-net:
+    driver: bridge

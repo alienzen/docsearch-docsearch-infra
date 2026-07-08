@@ -1,0 +1,117 @@
+# ─────────────────────────────────────────────────────────────
+#  FRONTEND — à déployer sur la machine "frontend" (SSD 256 Go)
+#  Redis + API FastAPI + UI statique + Nginx (point d'entrée public)
+#
+#  Ces 4 services restent sur un réseau bridge local à CETTE machine
+#  (contrairement à ES/Kafka) : ils sont colocalisés et se parlent
+#  par nom de conteneur. Seuls Redis (6379, appelé par les workers
+#  des machines d'ingestion) et Nginx (80/443, public) sont publiés
+#  sur le LAN — API et UI restent internes, jamais exposés directement.
+#
+#  NOTE : ES_HOST ne pointe que sur es-data-1 — le client
+#  elasticsearch-py de docsearch-api ne fait pas de round-robin
+#  multi-hôtes avec une simple chaîne d'environnement ES_HOST unique
+#  (limitation existante, pas introduite par ce découpage). Si
+#  es-data-1 tombe, l'API perd son point d'entrée même si le cluster
+#  ES reste opérationnel — à corriger séparément si besoin (liste de
+#  hosts côté client, ou un load-balancer TCP devant les 2 nœuds ES).
+# ─────────────────────────────────────────────────────────────
+x-app-env: &app-env
+  ES_HOST:         http://${ES_DATA1_IP}:9200
+  ES_INDEX:        ${ES_INDEX:-documents}
+  DEFAULT_SOURCE_SUBFOLDER: ${DEFAULT_SOURCE_SUBFOLDER:-documents}
+  ES_SEARCH_ALIAS: ${ES_SEARCH_ALIAS:-docsearch-all}
+  REDIS_HOST:      redis
+  LDAP_ENABLED:    ${LDAP_ENABLED:-false}
+  LDAP_HOST:       ${LDAP_HOST:-}
+  LDAP_BASE:       ${LDAP_BASE:-}
+  LDAP_BINDDN:     ${LDAP_BINDDN:-}
+  LDAP_PASS:       ${LDAP_PASS:-}
+  ADMIN_GROUP:     ${ADMIN_GROUP:-}
+  ADMIN_AUTH_DISABLED: ${ADMIN_AUTH_DISABLED:-false}
+  DEV_USER:        ${DEV_USER:-}
+
+services:
+  redis:
+    image: redis:7.2-alpine
+    container_name: docsearch-redis
+    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks: [frontend-net]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  api:
+    build:
+      context: ../../docsearch-api
+      dockerfile: Dockerfile
+      args:
+        DOCKER_UID: ${DOCKER_UID:-1000}
+    container_name: docsearch-api
+    command: uvicorn search_api:app --host 0.0.0.0 --port 8000
+    environment:
+      <<: *app-env
+    volumes:
+      # Aperçu de documents (conversion PDF) — nécessite le même accès
+      # aux sources que les workers ; si non monté ici, seule la
+      # fonctionnalité d'aperçu est indisponible, la recherche fonctionne.
+      - sources:${SOURCES_MOUNT:-/sources}:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [frontend-net]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  ui:
+    build:
+      context: ../../docsearch-ui
+      dockerfile: Dockerfile
+    container_name: docsearch-ui
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [frontend-net]
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: docsearch-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ../nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ../nginx/certs:/etc/nginx/certs:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      ui:
+        condition: service_started
+    networks: [frontend-net]
+    restart: unless-stopped
+
+volumes:
+  redis_data:
+  sources:
+    driver: local
+    driver_opts:
+      type:   none
+      o:      bind,ro
+      device: ${SOURCES_ROOT:-/data/docsearch-sources}
+
+networks:
+  frontend-net:
+    driver: bridge

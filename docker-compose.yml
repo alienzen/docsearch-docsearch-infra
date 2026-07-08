@@ -28,11 +28,21 @@ x-tika-common: &tika-common
 
 x-app-env: &app-env
   ES_HOST:         http://es01-dev:9200
+  # ES_INDEX / DEFAULT_SOURCE_SUBFOLDER : nom d'index et sous-dossier de
+  # la source par défaut ("documents") — voir sources_config.py. Les
+  # sources ajoutées ensuite via ./manage.sh add-source vivent dans le
+  # registre Redis, pas dans des variables d'environnement.
   ES_INDEX:        ${ES_INDEX:-documents}
+  DEFAULT_SOURCE_SUBFOLDER: ${DEFAULT_SOURCE_SUBFOLDER:-documents}
+  ES_SEARCH_ALIAS: ${ES_SEARCH_ALIAS:-docsearch-all}
   TIKA_SERVERS:    http://tika1:9998,http://tika2:9998,http://tika3:9998,http://tika4:9998
   KAFKA_BOOTSTRAP: kafka:9092
   REDIS_HOST:      redis
-  DOCS_FOLDER:     ${DOCS_FOLDER:-/documents}
+  # Point de montage FIXE (identique dans tous les conteneurs) sous
+  # lequel vivent tous les sous-dossiers sources — voir sources_config.py
+  # et .env.example (SOURCES_ROOT) pour la contrainte Docker qui impose
+  # ce montage parent unique plutôt qu'un montage par source.
+  SOURCES_MOUNT:   ${SOURCES_MOUNT:-/sources}
   LDAP_ENABLED:    ${LDAP_ENABLED:-false}
   LDAP_HOST:       ${LDAP_HOST:-}
   LDAP_BASE:       ${LDAP_BASE:-}
@@ -49,6 +59,7 @@ x-app-env: &app-env
   FILETYPE_CONFIG_CACHE_TTL: ${FILETYPE_CONFIG_CACHE_TTL:-10}
   RUNTIME_CONFIG_CACHE_TTL:  ${RUNTIME_CONFIG_CACHE_TTL:-10}
   PATHFILTER_CACHE_TTL:      ${PATHFILTER_CACHE_TTL:-10}
+  SOURCES_CONFIG_CACHE_TTL:  ${SOURCES_CONFIG_CACHE_TTL:-10}
 
 services:
 
@@ -279,7 +290,7 @@ services:
     environment:
       <<: *app-env
     volumes:
-      - documents:${DOCS_FOLDER:-/documents}:ro
+      - sources:${SOURCES_MOUNT:-/sources}:ro
     depends_on:
       kafka:
         condition: service_healthy
@@ -300,7 +311,7 @@ services:
     environment:
       <<: *app-env
     volumes:
-      - documents:${DOCS_FOLDER:-/documents}:ro
+      - sources:${SOURCES_MOUNT:-/sources}:ro
     depends_on:
       kafka:
         condition: service_healthy
@@ -329,7 +340,7 @@ services:
     environment:
       <<: *app-env
     volumes:
-      - documents:${DOCS_FOLDER:-/documents}:ro
+      - sources:${SOURCES_MOUNT:-/sources}:ro
     depends_on:
       kafka:
         condition: service_started
@@ -353,7 +364,7 @@ services:
       <<: *app-env
     volumes:
       # Nécessaire uniquement pour l'aperçu de documents (conversion PDF)
-      - documents:${DOCS_FOLDER:-/documents}:ro
+      - sources:${SOURCES_MOUNT:-/sources}:ro
     ports:
       - "8000:8000"
     depends_on:
@@ -420,12 +431,18 @@ volumes:
   zookeeper_data:
   zookeeper_logs:
   redis_data:
-  documents:
+  # Répertoire PARENT unique contenant un sous-dossier par source
+  # indexée (voir sources_config.py et .env.example : SOURCES_ROOT).
+  # Un bind-mount est fixé à la création du conteneur — ajouter une
+  # nouvelle source ne doit donc JAMAIS nécessiter un nouveau volume ni
+  # une modification de ce fichier, seulement un sous-dossier de
+  # SOURCES_ROOT + un enregistrement Redis (./manage.sh add-source).
+  sources:
     driver: local
     driver_opts:
       type:   none
       o:      bind
-      device: ${DOCS_PATH:-/documents}
+      device: ${SOURCES_ROOT:-/data/docsearch-sources}
 
 # ── Réseau ────────────────────────────────────────────────────
 networks:

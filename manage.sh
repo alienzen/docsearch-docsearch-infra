@@ -38,6 +38,7 @@ if [ -f .env ]; then
     done < .env
 fi
 ES_INDEX="${ES_INDEX:-documents}"
+ES_SEARCH_ALIAS="${ES_SEARCH_ALIAS:-docsearch-all}"
 
 log()  { echo -e "${GREEN}[DocSearch]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
@@ -108,9 +109,11 @@ case "${1:-help}" in
     curl -sf http://localhost:9200/_cluster/health?pretty 2>/dev/null \
       || warn "ES inaccessible"
     echo ""
-    log "Documents indexés :"
-    curl -sf "http://localhost:9200/${ES_INDEX}/_count?pretty" 2>/dev/null \
-      || warn "Index non trouvé"
+    log "Documents indexés (toutes sources, alias '${ES_SEARCH_ALIAS}') :"
+    curl -sf "http://localhost:9200/${ES_SEARCH_ALIAS}/_count?pretty" 2>/dev/null \
+      || warn "Aucune source indexée pour l'instant"
+    echo ""
+    log "Détail par source : ./manage.sh list-sources"
     ;;
 
   logs)
@@ -123,7 +126,15 @@ case "${1:-help}" in
     ;;
 
   init)
+    # Source par défaut = "documents" (rétrocompatible : un seul
+    # argument est toujours interprété comme un sous-dossier de cette
+    # source, comme avant le passage au multi-source).
+    SOURCE="documents"
     SOUS_DOSSIER="${2:-}"
+    if [ -n "${3:-}" ]; then
+        SOURCE="${2}"
+        SOUS_DOSSIER="${3}"
+    fi
 
     # Garde-fou : depuis le passage au pipeline producer/workers,
     # './manage.sh init' ne fait plus qu'écrire sur Kafka — ce sont
@@ -140,22 +151,76 @@ case "${1:-help}" in
   puis relancez              : sudo ./manage.sh init"
     fi
 
-    if [ -n "$SOUS_DOSSIER" ]; then
-        log "Réindexation du sous-dossier : $SOUS_DOSSIER"
-        $COMPOSE --profile init run --build --rm indexer-init python producer.py "$SOUS_DOSSIER"
-    else
-        log "Publication des fichiers sur Kafka (dossier complet)..."
-        $COMPOSE --profile init up --build indexer-init
-    fi
+    log "Publication des fichiers sur Kafka (source '${SOURCE}'${SOUS_DOSSIER:+, sous-dossier $SOUS_DOSSIER})..."
+    $COMPOSE --profile init run --build --rm indexer-init python producer.py "$SOURCE" "$SOUS_DOSSIER"
     log "Publication terminée. L'indexation se fait maintenant en arrière-plan par les $WORKER_COUNT worker(s) actifs."
     log "Suivre l'avancement : ./manage.sh logs worker"
-    log "Vérifier le nombre de documents indexés : curl http://localhost:9200/${ES_INDEX}/_count?pretty"
+    log "Vérifier le nombre de documents indexés : ./manage.sh list-sources"
     ;;
 
   scale-workers)
     N="${2:-8}"
     log "Mise à l'échelle des workers : $N instances..."
     $COMPOSE --profile dev up -d --scale worker="$N"
+    ;;
+
+  add-source)
+    NAME="${2:-}"
+    INDEX="${3:-}"
+    if [ -z "$NAME" ] || [ -z "$INDEX" ]; then
+        err "Usage : ./manage.sh add-source <nom> <index_es> [--subfolder <sous-dossier>] [--label <libellé>]
+  Exemple : mkdir -p \${SOURCES_ROOT:-/data/docsearch-sources}/finance
+            ./manage.sh add-source finance finance_docs --label Finance
+            ./manage.sh init finance"
+    fi
+    shift 3
+    SUBFOLDER_ARG=""
+    LABEL_ARG=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --subfolder) SUBFOLDER_ARG="$2"; shift 2 ;;
+            --label)     LABEL_ARG="$2"; shift 2 ;;
+            *) err "Option inconnue : $1" ;;
+        esac
+    done
+
+    PY_ARGS="name=\"$NAME\", es_index=\"$INDEX\""
+    [ -n "$SUBFOLDER_ARG" ] && PY_ARGS="$PY_ARGS, subfolder=\"$SUBFOLDER_ARG\""
+    [ -n "$LABEL_ARG" ]     && PY_ARGS="$PY_ARGS, label=\"$LABEL_ARG\""
+
+    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from sources_config import add_source
+import json
+cfg = add_source($PY_ARGS)
+print(json.dumps(cfg, indent=2, ensure_ascii=False))
+"
+    log "Source '$NAME' enregistrée — le watcher commence à l'observer sous ~5s (sans redémarrage)."
+    log "Lancer l'indexation initiale : ./manage.sh init $NAME"
+    ;;
+
+  list-sources)
+    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from sources_config import get_sources
+import json
+print(json.dumps({n: {'es_index': s.es_index, 'folder': s.folder, 'label': s.label} for n, s in get_sources().items()}, indent=2, ensure_ascii=False))
+"
+    ;;
+
+  remove-source)
+    NAME="${2:-}"
+    if [ -z "$NAME" ]; then
+        err "Usage : ./manage.sh remove-source <nom>
+  Retire la source du registre (le watcher arrête de l'observer) — NE
+  supprime PAS l'index Elasticsearch ni les documents déjà indexés.
+  Utiliser ensuite 'purge-path' pour nettoyer l'existant si besoin."
+    fi
+    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from sources_config import remove_source
+import json
+print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
+"
+    log "Source '$NAME' retirée du registre."
+    warn "L'index Elasticsearch associé n'a PAS été supprimé (voir purge-path pour nettoyer)."
     ;;
 
   set-config)
@@ -188,74 +253,80 @@ print(json.dumps(get_runtime_config(), indent=2, ensure_ascii=False))
 
   exclude-path)
     PATTERN="${2:-}"
+    SOURCE="${3:-documents}"
     if [ -z "$PATTERN" ]; then
-        err "Usage : ./manage.sh exclude-path <motif>
+        err "Usage : ./manage.sh exclude-path <motif> [source]
   Exemples : ./manage.sh exclude-path finance/confidentiel
-             ./manage.sh exclude-path '*/tmp'
+             ./manage.sh exclude-path '*/tmp' finance
              ./manage.sh exclude-path '*.cache'"
     fi
     $COMPOSE --profile init run --build --rm indexer-init python3 -c "
 from path_filter import add_excluded
 import json
-print(json.dumps(add_excluded('$PATTERN'), indent=2, ensure_ascii=False))
+print(json.dumps(add_excluded('$PATTERN', '$SOURCE'), indent=2, ensure_ascii=False))
 "
-    log "Motif d'exclusion ajouté : '$PATTERN' — effectif sous 10s pour les scans/watcher déjà en cours."
+    log "Motif d'exclusion ajouté à la source '$SOURCE' : '$PATTERN' — effectif sous 10s pour les scans/watcher déjà en cours."
     warn "Les documents déjà indexés dans ce sous-dossier NE SONT PAS supprimés automatiquement."
     ;;
 
   include-path)
     PATTERN="${2:-}"
+    SOURCE="${3:-documents}"
     if [ -z "$PATTERN" ]; then
-        err "Usage : ./manage.sh include-path <motif>
+        err "Usage : ./manage.sh include-path <motif> [source]
   Bascule en liste blanche : si au moins un motif est inclus, SEULS
   les chemins correspondants sont indexés (l'exclusion reste prioritaire)."
     fi
     $COMPOSE --profile init run --build --rm indexer-init python3 -c "
 from path_filter import add_included
 import json
-print(json.dumps(add_included('$PATTERN'), indent=2, ensure_ascii=False))
+print(json.dumps(add_included('$PATTERN', '$SOURCE'), indent=2, ensure_ascii=False))
 "
-    log "Motif d'inclusion ajouté : '$PATTERN'."
+    log "Motif d'inclusion ajouté à la source '$SOURCE' : '$PATTERN'."
     ;;
 
   remove-path-filter)
     PATTERN="${2:-}"
+    SOURCE="${3:-documents}"
     if [ -z "$PATTERN" ]; then
-        err "Usage : ./manage.sh remove-path-filter <motif>"
+        err "Usage : ./manage.sh remove-path-filter <motif> [source]"
     fi
     $COMPOSE --profile init run --build --rm indexer-init python3 -c "
 from path_filter import remove_filter
 import json
-print(json.dumps(remove_filter('$PATTERN'), indent=2, ensure_ascii=False))
+print(json.dumps(remove_filter('$PATTERN', '$SOURCE'), indent=2, ensure_ascii=False))
 "
-    log "Motif '$PATTERN' retiré (des deux listes s'il y était)."
+    log "Motif '$PATTERN' retiré de la source '$SOURCE' (des deux listes s'il y était)."
     ;;
 
   list-path-filters)
+    SOURCE="${2:-documents}"
     $COMPOSE --profile init run --build --rm indexer-init python3 -c "
 from path_filter import get_config
 import json
-print(json.dumps(get_config(), indent=2, ensure_ascii=False))
+print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
 "
     ;;
 
   purge-path)
     PATTERN="${2:-}"
+    SOURCE="${3:-documents}"
     if [ -z "$PATTERN" ]; then
-        err "Usage : ./manage.sh purge-path <motif>
+        err "Usage : ./manage.sh purge-path <motif> [source]
   Supprime de l'INDEX (pas du disque) les documents déjà indexés dont
   le chemin correspond au motif — même syntaxe glob que exclude-path.
   Utile après un exclude-path : ce dernier n'agit que sur les futurs
   passages, purge-path nettoie l'existant.
   Exemples :
     ./manage.sh purge-path finance/confidentiel
-    ./manage.sh purge-path '*/tmp'"
+    ./manage.sh purge-path '*/tmp' finance"
     fi
 
-    log "Aperçu (aucune suppression) — documents déjà indexés correspondant à '$PATTERN' :"
+    log "Aperçu (aucune suppression) — documents déjà indexés (source '$SOURCE') correspondant à '$PATTERN' :"
     $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from sources_config import get_source
 from indexer import purge_path
-n = purge_path('$PATTERN', dry_run=True)
+n = purge_path('$PATTERN', get_source('$SOURCE'), dry_run=True)
 print(f'{n} document(s) correspondent au motif.')
 "
 
@@ -267,8 +338,9 @@ print(f'{n} document(s) correspondent au motif.')
     fi
 
     $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from sources_config import get_source
 from indexer import purge_path
-n = purge_path('$PATTERN', dry_run=False)
+n = purge_path('$PATTERN', get_source('$SOURCE'), dry_run=False)
 print(f'{n} document(s) supprimé(s) de l\'index.')
 "
     log "Purge terminée."
@@ -342,8 +414,16 @@ print(json.dumps(get_config(), indent=2, ensure_ascii=False))
     echo "    restart         Redémarrer en mode dev"
     echo "    status          État + stats Elasticsearch"
     echo "    logs [service]  Logs en temps réel"
-    echo "    init [sous-dossier]  Indexation (complète, ou d'un sous-dossier de /documents)"
+    echo "    init [source] [sous-dossier]"
+    echo "                    Indexation d'une source (défaut : 'documents'), complète"
+    echo "                    ou restreinte à un sous-dossier de son répertoire"
     echo "    scale-workers N Ajuster le nombre de workers"
+    echo "    add-source <nom> <index_es> [--subfolder ...] [--label ...]"
+    echo "                    Enregistrer une nouvelle source à indexer — sans"
+    echo "                    redémarrage ni rebuild, voir SOURCES_ROOT dans .env"
+    echo "    list-sources    Lister les sources enregistrées"
+    echo "    remove-source <nom>"
+    echo "                    Retirer une source du registre (ne supprime PAS son index)"
     echo "    set-filetype <ext> [--enabled true|false] [--max-size Mo]"
     echo "                    Activer/désactiver un type de fichier ou fixer sa taille max"
     echo "                    (effectif immédiatement, sans redémarrage — cache 10s max)"
@@ -352,12 +432,12 @@ print(json.dumps(get_config(), indent=2, ensure_ascii=False))
     echo "                    Modifier un paramètre opérationnel (archive_max_depth,"
     echo "                    worker_flush_interval, watcher_poll_interval, etc.)"
     echo "    get-config      Afficher tous les paramètres opérationnels actuels"
-    echo "    exclude-path <motif>       Exclure un sous-dossier de l'indexation (glob)"
-    echo "    include-path <motif>       Passer en liste blanche (n'indexer QUE ces chemins)"
-    echo "    remove-path-filter <motif> Retirer un motif d'inclusion/exclusion"
-    echo "    list-path-filters          Afficher les filtres de chemin actuels"
-    echo "    purge-path <motif>         Supprimer de l'index les documents déjà"
-    echo "                               indexés correspondant au motif (avec confirmation)"
+    echo "    exclude-path <motif> [source]       Exclure un sous-dossier de l'indexation (glob)"
+    echo "    include-path <motif> [source]       Passer en liste blanche (n'indexer QUE ces chemins)"
+    echo "    remove-path-filter <motif> [source] Retirer un motif d'inclusion/exclusion"
+    echo "    list-path-filters [source]          Afficher les filtres de chemin actuels"
+    echo "    purge-path <motif> [source]         Supprimer de l'index les documents déjà"
+    echo "                                        indexés correspondant au motif (avec confirmation)"
     echo "    backup          Snapshot Elasticsearch"
     echo "    reset           Supprimer toutes les données (irréversible)"
     echo ""

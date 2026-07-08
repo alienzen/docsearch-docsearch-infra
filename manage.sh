@@ -126,15 +126,14 @@ case "${1:-help}" in
     ;;
 
   init)
-    # Source par défaut = "documents" (rétrocompatible : un seul
-    # argument est toujours interprété comme un sous-dossier de cette
-    # source, comme avant le passage au multi-source).
-    SOURCE="documents"
-    SOUS_DOSSIER="${2:-}"
-    if [ -n "${3:-}" ]; then
-        SOURCE="${2}"
-        SOUS_DOSSIER="${3}"
-    fi
+    # Positionnel, comme producer.py : premier argument = nom de la
+    # source (défaut "documents"), second = sous-dossier optionnel de
+    # cette source. Pas de cas particulier "un seul argument = sous-
+    # dossier" : ça entrait en conflit avec le sens normal du premier
+    # argument (nom de source) et provoquait un "Dossier introuvable"
+    # trompeur quand on tapait juste './manage.sh init <source>'.
+    SOURCE="${2:-documents}"
+    SOUS_DOSSIER="${3:-}"
 
     # Garde-fou : depuis le passage au pipeline producer/workers,
     # './manage.sh init' ne fait plus qu'écrire sur Kafka — ce sont

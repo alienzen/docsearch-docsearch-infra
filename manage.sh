@@ -348,20 +348,24 @@ print(f'{n} document(s) supprimé(s) de l\'index.')
   set-filetype)
     EXT="${2:-}"
     if [ -z "$EXT" ]; then
-        err "Usage : ./manage.sh set-filetype <extension> [--enabled true|false] [--max-size Mo]"
+        err "Usage : ./manage.sh set-filetype <extension> [--enabled true|false] [--max-size Mo] [--source <nom>]
+  Sans --source, s'applique à la source par défaut ('documents') — chaque
+  source a sa propre configuration de types de fichiers, indépendante."
     fi
     shift 2
     ENABLED_ARG=""
     MAXSIZE_ARG=""
+    SOURCE_ARG="documents"
     while [ $# -gt 0 ]; do
         case "$1" in
             --enabled)  ENABLED_ARG="$2"; shift 2 ;;
             --max-size) MAXSIZE_ARG="$2"; shift 2 ;;
+            --source)   SOURCE_ARG="$2"; shift 2 ;;
             *) err "Option inconnue : $1" ;;
         esac
     done
 
-    PY_ARGS="extension=\"$EXT\""
+    PY_ARGS="extension=\"$EXT\", source=\"$SOURCE_ARG\""
     [ -n "$ENABLED_ARG" ]  && PY_ARGS="$PY_ARGS, enabled=$([ "$ENABLED_ARG" = "true" ] && echo True || echo False)"
     [ -n "$MAXSIZE_ARG" ]  && PY_ARGS="$PY_ARGS, max_size_mb=$MAXSIZE_ARG"
 
@@ -371,14 +375,15 @@ import json
 cfg = set_filetype($PY_ARGS)
 print(json.dumps(cfg, indent=2, ensure_ascii=False))
 "
-    log "Configuration mise à jour — effective immédiatement (cache de ${FILETYPE_CONFIG_CACHE_TTL:-10}s max) sur les workers/watcher/producer déjà démarrés."
+    log "Configuration mise à jour pour la source '$SOURCE_ARG' — effective immédiatement (cache de ${FILETYPE_CONFIG_CACHE_TTL:-10}s max) sur les workers/watcher/producer déjà démarrés."
     ;;
 
   get-filetypes)
+    SOURCE="${2:-documents}"
     $COMPOSE --profile init run --build --rm indexer-init python3 -c "
 from filetype_config import get_config
 import json
-print(json.dumps(get_config(), indent=2, ensure_ascii=False))
+print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
 "
     ;;
 
@@ -423,10 +428,12 @@ print(json.dumps(get_config(), indent=2, ensure_ascii=False))
     echo "    list-sources    Lister les sources enregistrées"
     echo "    remove-source <nom>"
     echo "                    Retirer une source du registre (ne supprime PAS son index)"
-    echo "    set-filetype <ext> [--enabled true|false] [--max-size Mo]"
-    echo "                    Activer/désactiver un type de fichier ou fixer sa taille max"
-    echo "                    (effectif immédiatement, sans redémarrage — cache 10s max)"
-    echo "    get-filetypes   Afficher la configuration actuelle par type de fichier"
+    echo "    set-filetype <ext> [--enabled true|false] [--max-size Mo] [--source <nom>]"
+    echo "                    Activer/désactiver un type de fichier ou fixer sa taille max,"
+    echo "                    pour une source donnée (défaut 'documents' — chaque source a"
+    echo "                    sa propre config, effectif immédiatement — cache 10s max)"
+    echo "    get-filetypes [source]"
+    echo "                    Afficher la configuration par type de fichier d'une source"
     echo "    set-config <clé> <valeur>"
     echo "                    Modifier un paramètre opérationnel (archive_max_depth,"
     echo "                    worker_flush_interval, watcher_poll_interval, etc.)"

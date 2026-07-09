@@ -222,6 +222,117 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
     warn "L'index Elasticsearch associé n'a PAS été supprimé (voir purge-path pour nettoyer)."
     ;;
 
+  add-sql-source)
+    NAME="${2:-}"
+    DB_TYPE="${3:-}"
+    CONN_REF="${4:-}"
+    QUERY="${5:-}"
+    ID_COLUMN="${6:-}"
+    ES_INDEX_ARG="${7:-}"
+    FIELDS_JSON="${8:-}"
+    if [ -z "$NAME" ] || [ -z "$DB_TYPE" ] || [ -z "$CONN_REF" ] || [ -z "$QUERY" ] \
+       || [ -z "$ID_COLUMN" ] || [ -z "$ES_INDEX_ARG" ] || [ -z "$FIELDS_JSON" ]; then
+        err "Usage : ./manage.sh add-sql-source <nom> <postgresql|mysql> <connection_ref> <requête_sql> <id_column> <index_es> <fields_json> [--poll-interval secondes]
+
+  connection_ref : NOM d'une variable d'environnement contenant le DSN
+                    complet (définie dans .env), JAMAIS le DSN lui-même
+                    (le mot de passe ne doit jamais transiter par Redis).
+  fields_json    : mapping colonnes -> champs ES (JSON), ex :
+                    '[{\"column\":\"id\",\"es_field\":\"id\",\"es_type\":\"keyword\"},
+                      {\"column\":\"nom\",\"es_field\":\"nom\",\"es_type\":\"text\",\"analyzer\":\"french\"}]'
+                    es_type possibles : keyword, text, long, double, date, boolean.
+                    Toute colonne renvoyée par la requête mais absente de ce mapping est ignorée.
+
+  Exemple :
+    echo 'CLIENTS_DB_DSN=postgresql+psycopg2://user:pass@host:5432/db' >> .env
+    ./manage.sh add-sql-source clients postgresql CLIENTS_DB_DSN \\
+      \"SELECT id, nom, email FROM clients WHERE actif = true\" id clients_sql \\
+      '[{\"column\":\"id\",\"es_field\":\"id\",\"es_type\":\"keyword\"},{\"column\":\"nom\",\"es_field\":\"nom\",\"es_type\":\"text\"},{\"column\":\"email\",\"es_field\":\"email\",\"es_type\":\"keyword\"}]' \\
+      --poll-interval 300"
+    fi
+    shift 8
+    POLL_ARG=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --poll-interval) POLL_ARG="$2"; shift 2 ;;
+            *) err "Option inconnue : $1" ;;
+        esac
+    done
+
+    # Passage par variables d'environnement plutôt que par interpolation
+    # directe dans le script python -c : QUERY et FIELDS_JSON contiennent
+    # des guillemets et espaces qui casseraient toute tentative
+    # d'interpolation shell dans une chaîne python littérale.
+    export SQL_SRC_NAME="$NAME" SQL_SRC_DB_TYPE="$DB_TYPE" SQL_SRC_CONN_REF="$CONN_REF" \
+           SQL_SRC_QUERY="$QUERY" SQL_SRC_ID_COLUMN="$ID_COLUMN" SQL_SRC_ES_INDEX="$ES_INDEX_ARG" \
+           SQL_SRC_FIELDS_JSON="$FIELDS_JSON" SQL_SRC_POLL_INTERVAL="${POLL_ARG:-300}"
+
+    $COMPOSE --profile init run --build --rm \
+      -e SQL_SRC_NAME -e SQL_SRC_DB_TYPE -e SQL_SRC_CONN_REF -e SQL_SRC_QUERY \
+      -e SQL_SRC_ID_COLUMN -e SQL_SRC_ES_INDEX -e SQL_SRC_FIELDS_JSON -e SQL_SRC_POLL_INTERVAL \
+      indexer-init python3 -c "
+import os, json
+from sql_sources_config import add_source
+cfg = add_source(
+    name=os.environ['SQL_SRC_NAME'],
+    db_type=os.environ['SQL_SRC_DB_TYPE'],
+    connection_ref=os.environ['SQL_SRC_CONN_REF'],
+    query=os.environ['SQL_SRC_QUERY'],
+    id_column=os.environ['SQL_SRC_ID_COLUMN'],
+    es_index=os.environ['SQL_SRC_ES_INDEX'],
+    fields=json.loads(os.environ['SQL_SRC_FIELDS_JSON']),
+    poll_interval_seconds=int(os.environ['SQL_SRC_POLL_INTERVAL']),
+)
+print(json.dumps(cfg, indent=2, ensure_ascii=False))
+"
+    log "Source SQL '$NAME' enregistrée — sql-worker commence à l'interroger sous ~5s (sans redémarrage)."
+    warn "Vérifiez que '$CONN_REF' est bien défini dans .env (DSN complet) — jamais stocké dans Redis."
+    log "Déclencher un premier passage sans attendre poll_interval_seconds : ./manage.sh run-sql-source $NAME"
+    ;;
+
+  list-sql-sources)
+    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from sql_sources_config import get_sources
+import json
+print(json.dumps({n: {
+    'db_type':               s.db_type,
+    'connection_ref':        s.connection_ref,
+    'es_index':               s.es_index,
+    'id_column':              s.id_column,
+    'poll_interval_seconds':  s.poll_interval_seconds,
+    'fields':                 [f.__dict__ for f in s.fields],
+} for n, s in get_sources().items()}, indent=2, ensure_ascii=False))
+"
+    ;;
+
+  remove-sql-source)
+    NAME="${2:-}"
+    if [ -z "$NAME" ]; then
+        err "Usage : ./manage.sh remove-sql-source <nom>
+  Retire la source du registre (sql-worker arrête de l'interroger) — NE
+  supprime PAS l'index Elasticsearch ni les documents déjà indexés."
+    fi
+    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from sql_sources_config import remove_source
+import json
+print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
+"
+    log "Source SQL '$NAME' retirée du registre."
+    warn "L'index Elasticsearch associé n'a PAS été supprimé."
+    ;;
+
+  run-sql-source)
+    NAME="${2:-}"
+    if [ -z "$NAME" ]; then
+        err "Usage : ./manage.sh run-sql-source <nom>
+  Déclenche immédiatement un passage complet pour cette source (upsert +
+  réconciliation), sans attendre poll_interval_seconds — utile pour
+  tester une source qui vient d'être ajoutée."
+    fi
+    log "Passage manuel [$NAME]..."
+    $COMPOSE --profile init run --build --rm --env-file .env indexer-init python3 sql_indexer.py "$NAME"
+    ;;
+
   set-config)
     KEY="${2:-}"
     VALUE="${3:-}"
@@ -428,6 +539,11 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
     echo "    list-sources    Lister les sources enregistrées"
     echo "    remove-source <nom>"
     echo "                    Retirer une source du registre (ne supprime PAS son index)"
+    echo "    add-sql-source <nom> <postgresql|mysql> <connection_ref> <requête> <id_column> <index_es> <fields_json> [--poll-interval s]"
+    echo "                    Enregistrer une source SQL (résultat de requête indexé dans ES)"
+    echo "    list-sql-sources        Lister les sources SQL enregistrées"
+    echo "    remove-sql-source <nom> Retirer une source SQL du registre (ne supprime PAS son index)"
+    echo "    run-sql-source <nom>    Déclencher un passage manuel immédiat (sans attendre poll_interval)"
     echo "    set-filetype <ext> [--enabled true|false] [--max-size Mo] [--source <nom>]"
     echo "                    Activer/désactiver un type de fichier ou fixer sa taille max,"
     echo "                    pour une source donnée (défaut 'documents' — chaque source a"

@@ -289,6 +289,15 @@ services:
     container_name: docsearch-indexer-init
     profiles: ["init"]
     command: python producer.py
+    # env_file (en plus de x-app-env) : ce service sert aussi de point
+    # d'entrée générique pour toutes les commandes manage.sh en mode
+    # "docker compose run" (add-source, set-config, run-sql-source...).
+    # Le "--env-file .env" GLOBAL de docker compose ne fait QUE de
+    # l'interpolation ${VAR} dans ce fichier YAML, il n'injecte rien dans
+    # l'environnement du conteneur — d'où ce besoin explicite ici pour que
+    # run-sql-source voie le DSN référencé par connection_ref.
+    env_file:
+      - .env
     environment:
       <<: *app-env
     volumes:

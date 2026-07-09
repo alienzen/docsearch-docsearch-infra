@@ -330,7 +330,12 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
   tester une source qui vient d'être ajoutée."
     fi
     log "Passage manuel [$NAME]..."
-    $COMPOSE --profile init run --build --rm --env-file .env indexer-init python3 sql_indexer.py "$NAME"
+    # Pas de "--env-file .env" ici : ce flag GLOBAL de docker compose ne
+    # ferait que de l'interpolation \${VAR} dans docker-compose.yml, il
+    # n'injecterait rien dans l'environnement du conteneur. C'est le
+    # "env_file: .env" du service indexer-init (docker-compose.yml) qui
+    # rend le DSN (connection_ref) visible ici.
+    $COMPOSE --profile init run --build --rm indexer-init python3 sql_indexer.py "$NAME"
     ;;
 
   set-config)

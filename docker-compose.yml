@@ -388,6 +388,49 @@ services:
       - docsearch-net
     restart: unless-stopped
 
+  # ── Web worker (synchronisation crawl_index -> DocSearch) ──
+  # Relit les sources web enregistrées (./manage.sh add-web-source) et
+  # transforme périodiquement le résultat déjà présent dans leur
+  # crawl_index respectif vers le schéma DocSearch — ne pilote PAS le
+  # crawl lui-même (voir service web-crawler ci-dessous).
+  web-worker:
+    build:
+      context: ../docsearch-ingestion
+      dockerfile: Dockerfile
+      args:
+        DOCKER_UID: ${DOCKER_UID:-1000}
+    container_name: docsearch-web-worker
+    profiles: ["dev", "production"]
+    command: python web_worker.py
+    environment:
+      <<: *app-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - docsearch-net
+    restart: unless-stopped
+
+  # ── Elastic Open Web Crawler ────────────────────────────────
+  # Crawle UN site (./crawlers/cc-decisions.yml) et respecte lui-même la
+  # planification déclarée dans son "schedule:" (commande "schedule",
+  # long-running — PAS "crawl", qui ne ferait qu'une seule passe puis
+  # s'arrêterait). output_index doit correspondre au crawl_index déclaré
+  # via "./manage.sh add-web-source" pour que web-worker sache où relire
+  # le résultat. Un site supplémentaire = un nouveau service du même
+  # genre (un fichier de config, un output_index, une source web) —
+  # "schedule" ne gère qu'un seul CRAWL_CONFIG à la fois.
+  web-crawler-cc-decisions:
+    image: docker.elastic.co/integrations/crawler:latest
+    container_name: docsearch-web-crawler-cc-decisions
+    profiles: ["dev", "production"]
+    command: jruby bin/crawler schedule /config/cc-decisions.yml
+    volumes:
+      - ./crawlers:/config:ro
+    networks:
+      - docsearch-net
+    restart: unless-stopped
+
   # ── API FastAPI ───────────────────────────────────────────
   api:
     build:

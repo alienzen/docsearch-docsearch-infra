@@ -338,6 +338,100 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
     $COMPOSE --profile init run --build --rm indexer-init python3 sql_indexer.py "$NAME"
     ;;
 
+  add-web-source)
+    NAME="${2:-}"
+    CRAWL_INDEX="${3:-}"
+    ES_INDEX_ARG="${4:-}"
+    if [ -z "$NAME" ] || [ -z "$CRAWL_INDEX" ] || [ -z "$ES_INDEX_ARG" ]; then
+        err "Usage : ./manage.sh add-web-source <nom> <crawl_index> <index_es> [--poll-interval secondes] [--private]
+
+  crawl_index : index ES intermédiaire dans lequel Elastic Open Web Crawler
+                écrit (son 'output_index' à lui, schéma brut du crawler :
+                url, title, body...) — DIFFÉRENT de <index_es>.
+  index_es    : index ES final DocSearch (schéma commun filepath/content/
+                acl), rejoint automatiquement ES_SEARCH_ALIAS.
+  --private   : marque les pages acl.public=false au lieu de true (défaut :
+                public — adapté à un site web accessible sans authentification).
+
+  Exemple :
+    ./manage.sh add-web-source cc_decisions cc_decisions_raw cc_decisions --poll-interval 3600"
+    fi
+    shift 4
+    POLL_ARG=""
+    PUBLIC_ARG="true"
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --poll-interval) POLL_ARG="$2"; shift 2 ;;
+            --private) PUBLIC_ARG="false"; shift ;;
+            *) err "Option inconnue : $1" ;;
+        esac
+    done
+
+    export WEB_SRC_NAME="$NAME" WEB_SRC_CRAWL_INDEX="$CRAWL_INDEX" WEB_SRC_ES_INDEX="$ES_INDEX_ARG" \
+           WEB_SRC_POLL_INTERVAL="${POLL_ARG:-3600}" WEB_SRC_PUBLIC="$PUBLIC_ARG"
+
+    $COMPOSE --profile init run --build --rm \
+      -e WEB_SRC_NAME -e WEB_SRC_CRAWL_INDEX -e WEB_SRC_ES_INDEX -e WEB_SRC_POLL_INTERVAL -e WEB_SRC_PUBLIC \
+      indexer-init python3 -c "
+import os, json
+from web_sources_config import add_source
+cfg = add_source(
+    name=os.environ['WEB_SRC_NAME'],
+    crawl_index=os.environ['WEB_SRC_CRAWL_INDEX'],
+    es_index=os.environ['WEB_SRC_ES_INDEX'],
+    acl_public=(os.environ['WEB_SRC_PUBLIC'] == 'true'),
+    poll_interval_seconds=int(os.environ['WEB_SRC_POLL_INTERVAL']),
+)
+print(json.dumps(cfg, indent=2, ensure_ascii=False))
+"
+    log "Source web '$NAME' enregistrée — web-worker commence à la synchroniser sous ~5s (sans redémarrage)."
+    warn "Vérifiez que Elastic Open Web Crawler est bien configuré avec output_index: $CRAWL_INDEX pour ce site."
+    log "Déclencher un premier passage sans attendre poll_interval_seconds : ./manage.sh run-web-source $NAME"
+    ;;
+
+  list-web-sources)
+    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from web_sources_config import get_sources
+import json
+print(json.dumps({n: {
+    'crawl_index':            s.crawl_index,
+    'es_index':               s.es_index,
+    'acl_public':             s.acl_public,
+    'poll_interval_seconds':  s.poll_interval_seconds,
+} for n, s in get_sources().items()}, indent=2, ensure_ascii=False))
+"
+    ;;
+
+  remove-web-source)
+    NAME="${2:-}"
+    if [ -z "$NAME" ]; then
+        err "Usage : ./manage.sh remove-web-source <nom>
+  Retire la source du registre (web-worker arrête de la synchroniser) — NE
+  supprime PAS les index Elasticsearch (crawl_index ni es_index) ni les
+  documents déjà indexés."
+    fi
+    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+from web_sources_config import remove_source
+import json
+print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
+"
+    log "Source web '$NAME' retirée du registre."
+    warn "Les index Elasticsearch associés n'ont PAS été supprimés."
+    ;;
+
+  run-web-source)
+    NAME="${2:-}"
+    if [ -z "$NAME" ]; then
+        err "Usage : ./manage.sh run-web-source <nom>
+  Déclenche immédiatement un passage complet pour cette source (upsert +
+  réconciliation depuis crawl_index), sans attendre poll_interval_seconds —
+  utile pour tester une source qui vient d'être ajoutée, une fois qu'Elastic
+  Open Web Crawler a terminé au moins un crawl."
+    fi
+    log "Passage manuel [$NAME]..."
+    $COMPOSE --profile init run --build --rm indexer-init python3 web_indexer.py "$NAME"
+    ;;
+
   set-config)
     KEY="${2:-}"
     VALUE="${3:-}"
@@ -549,6 +643,12 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
     echo "    list-sql-sources        Lister les sources SQL enregistrées"
     echo "    remove-sql-source <nom> Retirer une source SQL du registre (ne supprime PAS son index)"
     echo "    run-sql-source <nom>    Déclencher un passage manuel immédiat (sans attendre poll_interval)"
+    echo "    add-web-source <nom> <crawl_index> <index_es> [--poll-interval s] [--private]"
+    echo "                    Enregistrer une source web (crawl_index = output_index d'Elastic"
+    echo "                    Open Web Crawler pour ce site, index_es = index DocSearch final)"
+    echo "    list-web-sources        Lister les sources web enregistrées"
+    echo "    remove-web-source <nom> Retirer une source web du registre (ne supprime PAS ses index)"
+    echo "    run-web-source <nom>    Déclencher un passage manuel immédiat (sans attendre poll_interval)"
     echo "    set-filetype <ext> [--enabled true|false] [--max-size Mo] [--source <nom>]"
     echo "                    Activer/désactiver un type de fichier ou fixer sa taille max,"
     echo "                    pour une source donnée (défaut 'documents' — chaque source a"

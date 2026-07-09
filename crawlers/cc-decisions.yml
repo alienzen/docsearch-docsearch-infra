@@ -1,0 +1,48 @@
+# crawlers/cc-decisions.yml — Elastic Open Web Crawler
+#
+# Crawle les décisions du Conseil constitutionnel vers un index ES
+# INTERMÉDIAIRE (output_index) — jamais l'alias docsearch-all directement.
+# web_indexer.py (docsearch-ingestion) relit cet index à intervalle
+# régulier pour le transformer vers le schéma DocSearch. Voir
+# ./manage.sh add-web-source pour enregistrer le lien crawl_index -> es_index.
+#
+# Lancé via : jruby bin/crawler schedule /config/cc-decisions.yml
+# (service "web-crawler-cc-decisions" dans docker-compose.yml — la
+# planification ci-dessous est gérée par le crawler lui-même).
+
+output_sink: elasticsearch
+output_index: cc_decisions_raw
+
+domains:
+  - url: https://www.conseil-constitutionnel.fr
+    sitemap_urls:
+      - https://www.conseil-constitutionnel.fr/sitemap.xml
+    crawl_rules:
+      - policy: allow
+        type: begins
+        pattern: /decision/
+      - policy: deny
+        type: begins
+        pattern: /recherche/
+      - policy: deny
+        type: begins
+        pattern: /core/
+      - policy: deny
+        type: begins
+        pattern: /cc-webservice/
+      - policy: deny
+        type: regex
+        pattern: '.*\?f(\[|%5B).*'
+      - policy: deny
+        type: begins
+        pattern: /
+
+max_crawl_depth: 3
+user_agent: "docsearch-crawler (contact: george.trashy@gmail.com)"
+
+schedule:
+  pattern: "0 3 * * *"     # recrawl quotidien à 3h
+
+elasticsearch:
+  host: http://es01-dev
+  port: 9200

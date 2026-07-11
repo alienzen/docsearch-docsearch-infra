@@ -232,7 +232,7 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
     FIELDS_JSON="${8:-}"
     if [ -z "$NAME" ] || [ -z "$DB_TYPE" ] || [ -z "$CONN_REF" ] || [ -z "$QUERY" ] \
        || [ -z "$ID_COLUMN" ] || [ -z "$ES_INDEX_ARG" ] || [ -z "$FIELDS_JSON" ]; then
-        err "Usage : ./manage.sh add-sql-source <nom> <postgresql|mysql> <connection_ref> <requête_sql> <id_column> <index_es> <fields_json> [--poll-interval secondes]
+        err "Usage : ./manage.sh add-sql-source <nom> <postgresql|mysql> <connection_ref> <requête_sql> <id_column> <index_es> <fields_json> [--poll-interval secondes] [--label <libellé>]
 
   connection_ref : NOM d'une variable d'environnement contenant le DSN
                     complet (définie dans .env), JAMAIS le DSN lui-même
@@ -252,9 +252,11 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
     fi
     shift 8
     POLL_ARG=""
+    LABEL_ARG=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --poll-interval) POLL_ARG="$2"; shift 2 ;;
+            --label)         LABEL_ARG="$2"; shift 2 ;;
             *) err "Option inconnue : $1" ;;
         esac
     done
@@ -265,11 +267,13 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
     # d'interpolation shell dans une chaîne python littérale.
     export SQL_SRC_NAME="$NAME" SQL_SRC_DB_TYPE="$DB_TYPE" SQL_SRC_CONN_REF="$CONN_REF" \
            SQL_SRC_QUERY="$QUERY" SQL_SRC_ID_COLUMN="$ID_COLUMN" SQL_SRC_ES_INDEX="$ES_INDEX_ARG" \
-           SQL_SRC_FIELDS_JSON="$FIELDS_JSON" SQL_SRC_POLL_INTERVAL="${POLL_ARG:-300}"
+           SQL_SRC_FIELDS_JSON="$FIELDS_JSON" SQL_SRC_POLL_INTERVAL="${POLL_ARG:-300}" \
+           SQL_SRC_LABEL="$LABEL_ARG"
 
     $COMPOSE --profile init run --build --rm \
       -e SQL_SRC_NAME -e SQL_SRC_DB_TYPE -e SQL_SRC_CONN_REF -e SQL_SRC_QUERY \
       -e SQL_SRC_ID_COLUMN -e SQL_SRC_ES_INDEX -e SQL_SRC_FIELDS_JSON -e SQL_SRC_POLL_INTERVAL \
+      -e SQL_SRC_LABEL \
       indexer-init python3 -c "
 import os, json
 from sql_sources_config import add_source
@@ -282,6 +286,7 @@ cfg = add_source(
     es_index=os.environ['SQL_SRC_ES_INDEX'],
     fields=json.loads(os.environ['SQL_SRC_FIELDS_JSON']),
     poll_interval_seconds=int(os.environ['SQL_SRC_POLL_INTERVAL']),
+    label=os.environ['SQL_SRC_LABEL'] or None,
 )
 print(json.dumps(cfg, indent=2, ensure_ascii=False))
 "
@@ -300,6 +305,7 @@ print(json.dumps({n: {
     'es_index':               s.es_index,
     'id_column':              s.id_column,
     'poll_interval_seconds':  s.poll_interval_seconds,
+    'label':                  s.label,
     'fields':                 [f.__dict__ for f in s.fields],
 } for n, s in get_sources().items()}, indent=2, ensure_ascii=False))
 "
@@ -343,7 +349,7 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
     CRAWL_INDEX="${3:-}"
     ES_INDEX_ARG="${4:-}"
     if [ -z "$NAME" ] || [ -z "$CRAWL_INDEX" ] || [ -z "$ES_INDEX_ARG" ]; then
-        err "Usage : ./manage.sh add-web-source <nom> <crawl_index> <index_es> [--poll-interval secondes] [--private]
+        err "Usage : ./manage.sh add-web-source <nom> <crawl_index> <index_es> [--poll-interval secondes] [--private] [--label <libellé>]
 
   crawl_index : index ES intermédiaire dans lequel Elastic Open Web Crawler
                 écrit (son 'output_index' à lui, schéma brut du crawler :
@@ -359,19 +365,23 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
     shift 4
     POLL_ARG=""
     PUBLIC_ARG="true"
+    LABEL_ARG=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --poll-interval) POLL_ARG="$2"; shift 2 ;;
             --private) PUBLIC_ARG="false"; shift ;;
+            --label) LABEL_ARG="$2"; shift 2 ;;
             *) err "Option inconnue : $1" ;;
         esac
     done
 
     export WEB_SRC_NAME="$NAME" WEB_SRC_CRAWL_INDEX="$CRAWL_INDEX" WEB_SRC_ES_INDEX="$ES_INDEX_ARG" \
-           WEB_SRC_POLL_INTERVAL="${POLL_ARG:-3600}" WEB_SRC_PUBLIC="$PUBLIC_ARG"
+           WEB_SRC_POLL_INTERVAL="${POLL_ARG:-3600}" WEB_SRC_PUBLIC="$PUBLIC_ARG" \
+           WEB_SRC_LABEL="$LABEL_ARG"
 
     $COMPOSE --profile init run --build --rm \
       -e WEB_SRC_NAME -e WEB_SRC_CRAWL_INDEX -e WEB_SRC_ES_INDEX -e WEB_SRC_POLL_INTERVAL -e WEB_SRC_PUBLIC \
+      -e WEB_SRC_LABEL \
       indexer-init python3 -c "
 import os, json
 from web_sources_config import add_source
@@ -381,6 +391,7 @@ cfg = add_source(
     es_index=os.environ['WEB_SRC_ES_INDEX'],
     acl_public=(os.environ['WEB_SRC_PUBLIC'] == 'true'),
     poll_interval_seconds=int(os.environ['WEB_SRC_POLL_INTERVAL']),
+    label=os.environ['WEB_SRC_LABEL'] or None,
 )
 print(json.dumps(cfg, indent=2, ensure_ascii=False))
 "
@@ -398,6 +409,7 @@ print(json.dumps({n: {
     'es_index':               s.es_index,
     'acl_public':             s.acl_public,
     'poll_interval_seconds':  s.poll_interval_seconds,
+    'label':                  s.label,
 } for n, s in get_sources().items()}, indent=2, ensure_ascii=False))
 "
     ;;
@@ -638,12 +650,12 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
     echo "    list-sources    Lister les sources enregistrées"
     echo "    remove-source <nom>"
     echo "                    Retirer une source du registre (ne supprime PAS son index)"
-    echo "    add-sql-source <nom> <postgresql|mysql> <connection_ref> <requête> <id_column> <index_es> <fields_json> [--poll-interval s]"
+    echo "    add-sql-source <nom> <postgresql|mysql> <connection_ref> <requête> <id_column> <index_es> <fields_json> [--poll-interval s] [--label ...]"
     echo "                    Enregistrer une source SQL (résultat de requête indexé dans ES)"
     echo "    list-sql-sources        Lister les sources SQL enregistrées"
     echo "    remove-sql-source <nom> Retirer une source SQL du registre (ne supprime PAS son index)"
     echo "    run-sql-source <nom>    Déclencher un passage manuel immédiat (sans attendre poll_interval)"
-    echo "    add-web-source <nom> <crawl_index> <index_es> [--poll-interval s] [--private]"
+    echo "    add-web-source <nom> <crawl_index> <index_es> [--poll-interval s] [--private] [--label ...]"
     echo "                    Enregistrer une source web (crawl_index = output_index d'Elastic"
     echo "                    Open Web Crawler pour ce site, index_es = index DocSearch final)"
     echo "    list-web-sources        Lister les sources web enregistrées"

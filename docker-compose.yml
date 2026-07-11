@@ -62,6 +62,15 @@ x-app-env: &app-env
   SOURCES_CONFIG_CACHE_TTL:  ${SOURCES_CONFIG_CACHE_TTL:-10}
   SQL_SOURCES_CACHE_TTL:     ${SQL_SOURCES_CACHE_TTL:-10}
   SQL_WORKER_MAX_PARALLEL:   ${SQL_WORKER_MAX_PARALLEL:-4}
+  # DSN dynamiques (panneau d'administration) — sql_dsn_registry.py
+  # (docsearch-api ET docsearch-ingestion). Clé de chiffrement Fernet
+  # symétrique, IDENTIQUE dans tous les services qui la consomment — voir
+  # .env.example pour comment la générer. Vide par défaut : tant qu'elle
+  # n'est pas définie, /admin/sql-dsns refuse les écritures (503) mais
+  # /admin/sql-sources et le mécanisme connection_ref existant restent
+  # inchangés (aucune régression).
+  DSN_ENCRYPTION_KEY:         ${DSN_ENCRYPTION_KEY:-}
+  SQL_DSN_REGISTRY_CACHE_TTL: ${SQL_DSN_REGISTRY_CACHE_TTL:-10}
 
 services:
 

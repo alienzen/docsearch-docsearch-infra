@@ -76,6 +76,9 @@ x-app-env: &app-env
   # (watcher.py:_reconcile_collections) cible le même index si cette
   # valeur est un jour changée, sans avoir à synchroniser deux .env.
   SAVED_COLLECTIONS_INDEX: ${SAVED_COLLECTIONS_INDEX:-saved_collections}
+  # Idem pour les surcharges de mots-clés personnalisés (docsearch-api/
+  # custom_keywords.py, docsearch-ingestion/indexer.py:apply_keyword_overrides).
+  CUSTOM_KEYWORDS_INDEX: ${CUSTOM_KEYWORDS_INDEX:-custom_keywords}
 
 services:
 

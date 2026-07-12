@@ -71,6 +71,11 @@ x-app-env: &app-env
   # inchangés (aucune régression).
   DSN_ENCRYPTION_KEY:         ${DSN_ENCRYPTION_KEY:-}
   SQL_DSN_REGISTRY_CACHE_TTL: ${SQL_DSN_REGISTRY_CACHE_TTL:-10}
+  # Nom de l'index des collections utilisateur (docsearch-api/
+  # saved_collections.py) — partagé ici pour que docsearch-ingestion
+  # (watcher.py:_reconcile_collections) cible le même index si cette
+  # valeur est un jour changée, sans avoir à synchroniser deux .env.
+  SAVED_COLLECTIONS_INDEX: ${SAVED_COLLECTIONS_INDEX:-saved_collections}
 
 services:
 

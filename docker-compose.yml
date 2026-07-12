@@ -29,8 +29,8 @@ x-tika-common: &tika-common
 x-app-env: &app-env
   ES_HOST:         http://es01-dev:9200
   # ES_INDEX / DEFAULT_SOURCE_SUBFOLDER : nom d'index et sous-dossier de
-  # la source par défaut ("documents") — voir sources_config.py. Les
-  # sources ajoutées ensuite via ./manage.sh add-source vivent dans le
+  # la source par défaut ("documents") — voir file_sources_config.py. Les
+  # sources ajoutées ensuite via ./manage.sh add-file-source vivent dans le
   # registre Redis, pas dans des variables d'environnement.
   ES_INDEX:        ${ES_INDEX:-documents}
   DEFAULT_SOURCE_SUBFOLDER: ${DEFAULT_SOURCE_SUBFOLDER:-documents}
@@ -39,7 +39,7 @@ x-app-env: &app-env
   KAFKA_BOOTSTRAP: kafka:9092
   REDIS_HOST:      redis
   # Point de montage FIXE (identique dans tous les conteneurs) sous
-  # lequel vivent tous les sous-dossiers sources — voir sources_config.py
+  # lequel vivent tous les sous-dossiers sources — voir file_sources_config.py
   # et .env.example (SOURCES_ROOT) pour la contrainte Docker qui impose
   # ce montage parent unique plutôt qu'un montage par source.
   SOURCES_MOUNT:   ${SOURCES_MOUNT:-/sources}
@@ -62,6 +62,15 @@ x-app-env: &app-env
   SOURCES_CONFIG_CACHE_TTL:  ${SOURCES_CONFIG_CACHE_TTL:-10}
   SQL_SOURCES_CACHE_TTL:     ${SQL_SOURCES_CACHE_TTL:-10}
   SQL_WORKER_MAX_PARALLEL:   ${SQL_WORKER_MAX_PARALLEL:-4}
+  # DSN dynamiques (panneau d'administration) — sql_dsn_registry.py
+  # (docsearch-api ET docsearch-ingestion). Clé de chiffrement Fernet
+  # symétrique, IDENTIQUE dans tous les services qui la consomment — voir
+  # .env.example pour comment la générer. Vide par défaut : tant qu'elle
+  # n'est pas définie, /admin/sql-dsns refuse les écritures (503) mais
+  # /admin/sql-sources et le mécanisme connection_ref existant restent
+  # inchangés (aucune régression).
+  DSN_ENCRYPTION_KEY:         ${DSN_ENCRYPTION_KEY:-}
+  SQL_DSN_REGISTRY_CACHE_TTL: ${SQL_DSN_REGISTRY_CACHE_TTL:-10}
 
 services:
 
@@ -291,7 +300,7 @@ services:
     command: python producer.py
     # env_file (en plus de x-app-env) : ce service sert aussi de point
     # d'entrée générique pour toutes les commandes manage.sh en mode
-    # "docker compose run" (add-source, set-config, run-sql-source...).
+    # "docker compose run" (add-file-source, set-config, run-sql-source...).
     # Le "--env-file .env" GLOBAL de docker compose ne fait QUE de
     # l'interpolation ${VAR} dans ce fichier YAML, il n'injecte rien dans
     # l'environnement du conteneur — d'où ce besoin explicite ici pour que
@@ -515,11 +524,11 @@ volumes:
   zookeeper_logs:
   redis_data:
   # Répertoire PARENT unique contenant un sous-dossier par source
-  # indexée (voir sources_config.py et .env.example : SOURCES_ROOT).
+  # indexée (voir file_sources_config.py et .env.example : SOURCES_ROOT).
   # Un bind-mount est fixé à la création du conteneur — ajouter une
   # nouvelle source ne doit donc JAMAIS nécessiter un nouveau volume ni
   # une modification de ce fichier, seulement un sous-dossier de
-  # SOURCES_ROOT + un enregistrement Redis (./manage.sh add-source).
+  # SOURCES_ROOT + un enregistrement Redis (./manage.sh add-file-source).
   sources:
     driver: local
     driver_opts:

@@ -113,7 +113,7 @@ case "${1:-help}" in
     curl -sf "http://localhost:9200/${ES_SEARCH_ALIAS}/_count?pretty" 2>/dev/null \
       || warn "Aucune source indexée pour l'instant"
     echo ""
-    log "Détail par source : ./manage.sh list-sources"
+    log "Détail par source : ./manage.sh list-file-sources"
     ;;
 
   logs)
@@ -154,7 +154,7 @@ case "${1:-help}" in
     $COMPOSE --profile init run --build --rm indexer-init python producer.py "$SOURCE" "$SOUS_DOSSIER"
     log "Publication terminée. L'indexation se fait maintenant en arrière-plan par les $WORKER_COUNT worker(s) actifs."
     log "Suivre l'avancement : ./manage.sh logs worker"
-    log "Vérifier le nombre de documents indexés : ./manage.sh list-sources"
+    log "Vérifier le nombre de documents indexés : ./manage.sh list-file-sources"
     ;;
 
   scale-workers)
@@ -163,13 +163,13 @@ case "${1:-help}" in
     $COMPOSE --profile dev up -d --scale worker="$N"
     ;;
 
-  add-source)
+  add-file-source)
     NAME="${2:-}"
     INDEX="${3:-}"
     if [ -z "$NAME" ] || [ -z "$INDEX" ]; then
-        err "Usage : ./manage.sh add-source <nom> <index_es> [--subfolder <sous-dossier>] [--label <libellé>]
+        err "Usage : ./manage.sh add-file-source <nom> <index_es> [--subfolder <sous-dossier>] [--label <libellé>]
   Exemple : mkdir -p \${SOURCES_ROOT:-/data/docsearch-sources}/finance
-            ./manage.sh add-source finance finance_docs --label Finance
+            ./manage.sh add-file-source finance finance_docs --label Finance
             ./manage.sh init finance"
     fi
     shift 3
@@ -188,7 +188,7 @@ case "${1:-help}" in
     [ -n "$LABEL_ARG" ]     && PY_ARGS="$PY_ARGS, label=\"$LABEL_ARG\""
 
     $COMPOSE --profile init run --build --rm indexer-init python3 -c "
-from sources_config import add_source
+from file_sources_config import add_source
 import json
 cfg = add_source($PY_ARGS)
 print(json.dumps(cfg, indent=2, ensure_ascii=False))
@@ -197,24 +197,24 @@ print(json.dumps(cfg, indent=2, ensure_ascii=False))
     log "Lancer l'indexation initiale : ./manage.sh init $NAME"
     ;;
 
-  list-sources)
+  list-file-sources)
     $COMPOSE --profile init run --build --rm indexer-init python3 -c "
-from sources_config import get_sources
+from file_sources_config import get_sources
 import json
 print(json.dumps({n: {'es_index': s.es_index, 'folder': s.folder, 'label': s.label} for n, s in get_sources().items()}, indent=2, ensure_ascii=False))
 "
     ;;
 
-  remove-source)
+  remove-file-source)
     NAME="${2:-}"
     if [ -z "$NAME" ]; then
-        err "Usage : ./manage.sh remove-source <nom>
+        err "Usage : ./manage.sh remove-file-source <nom>
   Retire la source du registre (le watcher arrête de l'observer) — NE
   supprime PAS l'index Elasticsearch ni les documents déjà indexés.
   Utiliser ensuite 'purge-path' pour nettoyer l'existant si besoin."
     fi
     $COMPOSE --profile init run --build --rm indexer-init python3 -c "
-from sources_config import remove_source
+from file_sources_config import remove_source
 import json
 print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
 "
@@ -232,7 +232,7 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
     FIELDS_JSON="${8:-}"
     if [ -z "$NAME" ] || [ -z "$DB_TYPE" ] || [ -z "$CONN_REF" ] || [ -z "$QUERY" ] \
        || [ -z "$ID_COLUMN" ] || [ -z "$ES_INDEX_ARG" ] || [ -z "$FIELDS_JSON" ]; then
-        err "Usage : ./manage.sh add-sql-source <nom> <postgresql|mysql> <connection_ref> <requête_sql> <id_column> <index_es> <fields_json> [--poll-interval secondes]
+        err "Usage : ./manage.sh add-sql-source <nom> <postgresql|mysql> <connection_ref> <requête_sql> <id_column> <index_es> <fields_json> [--poll-interval secondes] [--label <libellé>]
 
   connection_ref : NOM d'une variable d'environnement contenant le DSN
                     complet (définie dans .env), JAMAIS le DSN lui-même
@@ -252,9 +252,11 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
     fi
     shift 8
     POLL_ARG=""
+    LABEL_ARG=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --poll-interval) POLL_ARG="$2"; shift 2 ;;
+            --label)         LABEL_ARG="$2"; shift 2 ;;
             *) err "Option inconnue : $1" ;;
         esac
     done
@@ -265,11 +267,13 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
     # d'interpolation shell dans une chaîne python littérale.
     export SQL_SRC_NAME="$NAME" SQL_SRC_DB_TYPE="$DB_TYPE" SQL_SRC_CONN_REF="$CONN_REF" \
            SQL_SRC_QUERY="$QUERY" SQL_SRC_ID_COLUMN="$ID_COLUMN" SQL_SRC_ES_INDEX="$ES_INDEX_ARG" \
-           SQL_SRC_FIELDS_JSON="$FIELDS_JSON" SQL_SRC_POLL_INTERVAL="${POLL_ARG:-300}"
+           SQL_SRC_FIELDS_JSON="$FIELDS_JSON" SQL_SRC_POLL_INTERVAL="${POLL_ARG:-300}" \
+           SQL_SRC_LABEL="$LABEL_ARG"
 
     $COMPOSE --profile init run --build --rm \
       -e SQL_SRC_NAME -e SQL_SRC_DB_TYPE -e SQL_SRC_CONN_REF -e SQL_SRC_QUERY \
       -e SQL_SRC_ID_COLUMN -e SQL_SRC_ES_INDEX -e SQL_SRC_FIELDS_JSON -e SQL_SRC_POLL_INTERVAL \
+      -e SQL_SRC_LABEL \
       indexer-init python3 -c "
 import os, json
 from sql_sources_config import add_source
@@ -282,6 +286,7 @@ cfg = add_source(
     es_index=os.environ['SQL_SRC_ES_INDEX'],
     fields=json.loads(os.environ['SQL_SRC_FIELDS_JSON']),
     poll_interval_seconds=int(os.environ['SQL_SRC_POLL_INTERVAL']),
+    label=os.environ['SQL_SRC_LABEL'] or None,
 )
 print(json.dumps(cfg, indent=2, ensure_ascii=False))
 "
@@ -300,6 +305,7 @@ print(json.dumps({n: {
     'es_index':               s.es_index,
     'id_column':              s.id_column,
     'poll_interval_seconds':  s.poll_interval_seconds,
+    'label':                  s.label,
     'fields':                 [f.__dict__ for f in s.fields],
 } for n, s in get_sources().items()}, indent=2, ensure_ascii=False))
 "
@@ -343,7 +349,7 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
     CRAWL_INDEX="${3:-}"
     ES_INDEX_ARG="${4:-}"
     if [ -z "$NAME" ] || [ -z "$CRAWL_INDEX" ] || [ -z "$ES_INDEX_ARG" ]; then
-        err "Usage : ./manage.sh add-web-source <nom> <crawl_index> <index_es> [--poll-interval secondes] [--private]
+        err "Usage : ./manage.sh add-web-source <nom> <crawl_index> <index_es> [--poll-interval secondes] [--private] [--label <libellé>]
 
   crawl_index : index ES intermédiaire dans lequel Elastic Open Web Crawler
                 écrit (son 'output_index' à lui, schéma brut du crawler :
@@ -359,19 +365,23 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
     shift 4
     POLL_ARG=""
     PUBLIC_ARG="true"
+    LABEL_ARG=""
     while [ $# -gt 0 ]; do
         case "$1" in
             --poll-interval) POLL_ARG="$2"; shift 2 ;;
             --private) PUBLIC_ARG="false"; shift ;;
+            --label) LABEL_ARG="$2"; shift 2 ;;
             *) err "Option inconnue : $1" ;;
         esac
     done
 
     export WEB_SRC_NAME="$NAME" WEB_SRC_CRAWL_INDEX="$CRAWL_INDEX" WEB_SRC_ES_INDEX="$ES_INDEX_ARG" \
-           WEB_SRC_POLL_INTERVAL="${POLL_ARG:-3600}" WEB_SRC_PUBLIC="$PUBLIC_ARG"
+           WEB_SRC_POLL_INTERVAL="${POLL_ARG:-3600}" WEB_SRC_PUBLIC="$PUBLIC_ARG" \
+           WEB_SRC_LABEL="$LABEL_ARG"
 
     $COMPOSE --profile init run --build --rm \
       -e WEB_SRC_NAME -e WEB_SRC_CRAWL_INDEX -e WEB_SRC_ES_INDEX -e WEB_SRC_POLL_INTERVAL -e WEB_SRC_PUBLIC \
+      -e WEB_SRC_LABEL \
       indexer-init python3 -c "
 import os, json
 from web_sources_config import add_source
@@ -381,6 +391,7 @@ cfg = add_source(
     es_index=os.environ['WEB_SRC_ES_INDEX'],
     acl_public=(os.environ['WEB_SRC_PUBLIC'] == 'true'),
     poll_interval_seconds=int(os.environ['WEB_SRC_POLL_INTERVAL']),
+    label=os.environ['WEB_SRC_LABEL'] or None,
 )
 print(json.dumps(cfg, indent=2, ensure_ascii=False))
 "
@@ -398,6 +409,7 @@ print(json.dumps({n: {
     'es_index':               s.es_index,
     'acl_public':             s.acl_public,
     'poll_interval_seconds':  s.poll_interval_seconds,
+    'label':                  s.label,
 } for n, s in get_sources().items()}, indent=2, ensure_ascii=False))
 "
     ;;
@@ -533,7 +545,7 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
 
     log "Aperçu (aucune suppression) — documents déjà indexés (source '$SOURCE') correspondant à '$PATTERN' :"
     $COMPOSE --profile init run --build --rm indexer-init python3 -c "
-from sources_config import get_source
+from file_sources_config import get_source
 from indexer import purge_path
 n = purge_path('$PATTERN', get_source('$SOURCE'), dry_run=True)
 print(f'{n} document(s) correspondent au motif.')
@@ -547,7 +559,7 @@ print(f'{n} document(s) correspondent au motif.')
     fi
 
     $COMPOSE --profile init run --build --rm indexer-init python3 -c "
-from sources_config import get_source
+from file_sources_config import get_source
 from indexer import purge_path
 n = purge_path('$PATTERN', get_source('$SOURCE'), dry_run=False)
 print(f'{n} document(s) supprimé(s) de l\'index.')
@@ -632,18 +644,18 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
     echo "                    Indexation d'une source (défaut : 'documents'), complète"
     echo "                    ou restreinte à un sous-dossier de son répertoire"
     echo "    scale-workers N Ajuster le nombre de workers"
-    echo "    add-source <nom> <index_es> [--subfolder ...] [--label ...]"
+    echo "    add-file-source <nom> <index_es> [--subfolder ...] [--label ...]"
     echo "                    Enregistrer une nouvelle source à indexer — sans"
     echo "                    redémarrage ni rebuild, voir SOURCES_ROOT dans .env"
-    echo "    list-sources    Lister les sources enregistrées"
-    echo "    remove-source <nom>"
+    echo "    list-file-sources    Lister les sources fichiers enregistrées"
+    echo "    remove-file-source <nom>"
     echo "                    Retirer une source du registre (ne supprime PAS son index)"
-    echo "    add-sql-source <nom> <postgresql|mysql> <connection_ref> <requête> <id_column> <index_es> <fields_json> [--poll-interval s]"
+    echo "    add-sql-source <nom> <postgresql|mysql> <connection_ref> <requête> <id_column> <index_es> <fields_json> [--poll-interval s] [--label ...]"
     echo "                    Enregistrer une source SQL (résultat de requête indexé dans ES)"
     echo "    list-sql-sources        Lister les sources SQL enregistrées"
     echo "    remove-sql-source <nom> Retirer une source SQL du registre (ne supprime PAS son index)"
     echo "    run-sql-source <nom>    Déclencher un passage manuel immédiat (sans attendre poll_interval)"
-    echo "    add-web-source <nom> <crawl_index> <index_es> [--poll-interval s] [--private]"
+    echo "    add-web-source <nom> <crawl_index> <index_es> [--poll-interval s] [--private] [--label ...]"
     echo "                    Enregistrer une source web (crawl_index = output_index d'Elastic"
     echo "                    Open Web Crawler pour ce site, index_es = index DocSearch final)"
     echo "    list-web-sources        Lister les sources web enregistrées"

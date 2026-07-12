@@ -56,6 +56,18 @@ chmod +x manage.sh
 > et refuse de continuer si Kafka ou les workers ne sont pas détectés.
 > Suivre la progression avec `./manage.sh logs worker` et
 > `curl http://localhost:9200/documents/_count?pretty`.
+>
+> **`init` reste nécessaire pour le contenu déjà présent** au moment où
+> une source est enregistrée (`add-file-source`) : le watcher ne détecte
+> que les fichiers créés/modifiés APRÈS son démarrage, jamais ceux déjà
+> sur disque à cet instant-là. En revanche, le mapping Elasticsearch et
+> l'alias de recherche fédérée sont désormais initialisés automatiquement
+> par le watcher dès qu'il commence à surveiller une source — un fichier
+> déposé après coup dans le dossier d'une source jamais "init" est
+> maintenant indexé et cherchable correctement (auparavant, Elasticsearch
+> auto-créait l'index à la première écriture avec un mapping dynamique et
+> sans alias, le rendant invisible à la recherche fédérée, sans aucune
+> erreur visible pour le diagnostiquer).
 
 
 ## Pourquoi ce découpage

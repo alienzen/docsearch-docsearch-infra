@@ -3,6 +3,9 @@
 Orchestration Docker Compose de **DocSearch** — c'est le dépôt à cloner en
 premier et celui qui lance l'ensemble du système.
 
+Pour la liste complète des fonctionnalités (recherche, ingestion,
+administration, sécurité), voir [FEATURES.md](FEATURES.md).
+
 ## Architecture multi-dépôts
 
 DocSearch est découpé en 6 dépôts indépendants :

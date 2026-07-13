@@ -5,7 +5,7 @@ premier et celui qui lance l'ensemble du système.
 
 ## Architecture multi-dépôts
 
-DocSearch est découpé en 5 dépôts indépendants :
+DocSearch est découpé en 6 dépôts indépendants :
 
 | Dépôt | Rôle | Cycle de vie |
 |---|---|---|
@@ -97,14 +97,24 @@ chmod +x manage.sh
 
 ## Rebuild après modification d'un sous-projet
 
+⚠️ Reconstruire **tous** les services qui partagent le même contexte de
+build (voir `context:` dans `docker-compose.yml`) — en oublier un laisse
+un conteneur tourner avec du code périmé, silencieusement (c'est ce qui
+s'est produit avec `watcher` pour l'OCR avant que ce README ne soit à
+jour : image jamais reconstruite après l'ajout de la fonctionnalité).
+
 ```bash
 # Après une modification dans docsearch-ingestion :
-docker compose build worker watcher indexer-init
-docker compose up -d worker watcher
+# (context: ../docsearch-ingestion — worker, watcher, sql-worker,
+# web-worker et indexer-init en dépendent TOUS, pas seulement
+# worker/watcher)
+docker compose build worker watcher sql-worker web-worker indexer-init
+docker compose up -d worker watcher sql-worker web-worker
 
 # Après une modification dans docsearch-api :
-docker compose build api
-docker compose up -d api
+# (context: ../docsearch-api — api ET alert-worker en dépendent)
+docker compose build api alert-worker
+docker compose up -d api alert-worker
 
 # Après une modification dans docsearch-ui :
 docker compose build ui

@@ -451,7 +451,8 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
         err "Usage : ./manage.sh set-config <clé> <valeur>
   Clés disponibles : archive_max_files, archive_max_total_size_mb,
                       archive_max_depth, worker_batch_size,
-                      worker_flush_interval, watcher_poll_interval"
+                      worker_flush_interval, watcher_poll_interval,
+                      ocr_languages, ocr_strategy"
     fi
     $COMPOSE --profile init run --build --rm indexer-init python3 -c "
 from runtime_config import set_param
@@ -669,7 +670,11 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
     echo "                    Afficher la configuration par type de fichier d'une source"
     echo "    set-config <clé> <valeur>"
     echo "                    Modifier un paramètre opérationnel (archive_max_depth,"
-    echo "                    worker_flush_interval, watcher_poll_interval, etc.)"
+    echo "                    worker_flush_interval, watcher_poll_interval, ocr_languages,"
+    echo "                    ocr_strategy, etc.) — l'ACTIVATION de l'OCR (Tesseract via Tika)"
+    echo "                    se fait par source, via l'admin UI ou POST"
+    echo "                    /admin/file-sources/<nom>/ocr (pas de flag manage.sh dédié,"
+    echo "                    même convention que searchable/collectable)"
     echo "    get-config      Afficher tous les paramètres opérationnels actuels"
     echo "    exclude-path <motif> [source]       Exclure un sous-dossier de l'indexation (glob)"
     echo "    include-path <motif> [source]       Passer en liste blanche (n'indexer QUE ces chemins)"

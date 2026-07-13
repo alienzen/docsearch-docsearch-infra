@@ -485,6 +485,29 @@ services:
       # prêt, ce qui bloque les services qui en dépendent (ui, nginx).
       start_period: 90s
 
+  # ── Worker d'alertes (vérification périodique des recherches
+  # sauvegardées marquées "alerte", voir docsearch-api/alert_worker.py) ──
+  # Même image que le service api (aucune route HTTP exposée, ports non
+  # publiés) — un tick qui traîne ne doit jamais ralentir /search, d'où un
+  # conteneur séparé plutôt qu'une tâche de fond dans le processus uvicorn.
+  alert-worker:
+    build:
+      context: ../docsearch-api
+      dockerfile: Dockerfile
+      args:
+        DOCKER_UID: ${DOCKER_UID:-1000}
+    container_name: docsearch-alert-worker
+    profiles: ["dev", "production"]
+    command: python alert_worker.py
+    environment:
+      <<: *app-env
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - docsearch-net
+    restart: unless-stopped
+
   # ── Nginx (production uniquement) ─────────────────────────
   # ── UI (interface web statique) ──────────────────────────────
   ui:

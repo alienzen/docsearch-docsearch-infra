@@ -43,6 +43,10 @@ x-app-env: &app-env
   # et .env.example (SOURCES_ROOT) pour la contrainte Docker qui impose
   # ce montage parent unique plutôt qu'un montage par source.
   SOURCES_MOUNT:   ${SOURCES_MOUNT:-/sources}
+  # SID Windows → identité LDAP, pour l'extraction d'ACL NTFS sur les
+  # sources montées via CIFS (voir docsearch-ingestion/app/acl_extractor.py
+  # et .env.example) — sans effet sur les sources POSIX classiques.
+  CIFS_SID_MAP:    ${CIFS_SID_MAP:-{}}
   LDAP_ENABLED:    ${LDAP_ENABLED:-false}
   LDAP_HOST:       ${LDAP_HOST:-}
   LDAP_BASE:       ${LDAP_BASE:-}

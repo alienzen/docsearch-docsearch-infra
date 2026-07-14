@@ -10,10 +10,13 @@ méthodes, du plus simple au plus proche de la navigation réelle.
 Fournis par la stack `~/ldap-test-stack` (base `dc=docsearch,dc=test`,
 voir `bootstrap-ldifs/03-users.ldif`) :
 
-| Utilisateur    | Mot de passe  | Groupes                                |
-|----------------|---------------|------------------------------------------|
-| `alice.admin`  | `testpass123` | `docsearch-admins`, `docsearch-users`  |
-| `bob.user`     | `testpass123` | `docsearch-users`                      |
+| Utilisateur    | Groupes                                |
+|----------------|------------------------------------------|
+| `alice.admin`  | `docsearch-admins`, `docsearch-users`  |
+| `bob.user`     | `docsearch-users`                      |
+
+(Mot de passe : voir `userPassword` dans `bootstrap-ldifs/03-users.ldif`,
+pas reproduit ici.)
 
 Seul `alice.admin` a accès au panneau `/admin.html` (`ADMIN_GROUP=docsearch-admins`).
 

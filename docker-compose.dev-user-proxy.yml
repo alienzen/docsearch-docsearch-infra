@@ -1,0 +1,41 @@
+# docker-compose.dev-user-proxy.yml — TEST LOCAL UNIQUEMENT, alternative
+# à une extension navigateur (type ModHeader) pour simuler un utilisateur
+# authentifié sans la modifier requête par requête.
+#
+# Fichier autonome, à lancer À PART du docker-compose.yml principal
+# (aucun impact sur les services dev/production existants) :
+#
+#   docker compose -f docker-compose.dev-user-proxy.yml up -d
+#   → navigateur sur http://192.168.56.101:8090/ (ou http://localhost:8090/)
+#     avec le header X-User déjà injecté (voir TEST_X_USER ci-dessous)
+#
+#   docker compose -f docker-compose.dev-user-proxy.yml down
+#   → pour arrêter/retirer
+#
+# Changer d'utilisateur simulé : modifier TEST_X_USER puis
+#   docker compose -f docker-compose.dev-user-proxy.yml up -d --force-recreate
+#
+# Nécessite que la stack principale (service "ui") tourne déjà sur
+# docsearch-net.
+services:
+  dev-user-proxy:
+    image: nginx:1.27-alpine
+    container_name: docsearch-dev-user-proxy
+    environment:
+      TEST_X_USER: ${TEST_X_USER:-alice.admin}
+    volumes:
+      - ./nginx/dev-user-proxy.conf.template:/etc/nginx/custom-templates/dev-user-proxy.conf.template:ro
+    command: >
+      sh -c "sed \"s/__TEST_X_USER__/$$TEST_X_USER/g\"
+      /etc/nginx/custom-templates/dev-user-proxy.conf.template > /etc/nginx/nginx.conf
+      && exec nginx -g 'daemon off;'"
+    ports:
+      - "8090:80"
+    networks:
+      - docsearch-net
+    restart: unless-stopped
+
+networks:
+  docsearch-net:
+    name: docsearch-infra_docsearch-net
+    external: true

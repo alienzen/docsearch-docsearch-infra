@@ -161,6 +161,10 @@ Permet de consulter l'état des composants, ajuster la configuration
 déclencher un scan ou une purge — sans jamais toucher à Docker. Voir
 le README de `docsearch-api` pour le détail des routes `/admin/*`.
 
+Sans SSO configuré (dev/test), voir
+[HOWTO-simuler-utilisateur.md](HOWTO-simuler-utilisateur.md) pour
+simuler un utilisateur (et donc accéder à `/admin.html`).
+
 ## Nom de l'index Elasticsearch
 
 `ES_INDEX` (défaut `documents`) doit être **identique** entre tous les

@@ -1,0 +1,38 @@
+# dev-user-proxy.conf.template — TEST LOCAL UNIQUEMENT.
+#
+# Reproduit le rôle que joue Nginx en production (injection du header
+# X-User après validation SSO, voir nginx.conf) mais avec un utilisateur
+# FIXE défini par la variable TEST_X_USER — permet de naviguer dans
+# docsearch-ui au navigateur sans extension de modification de headers.
+#
+# Le placeholder de nom d'utilisateur ci-dessous est substitué par sed
+# au démarrage du conteneur (voir docker-compose.dev-user-proxy.yml) —
+# PAS le mécanisme envsubst intégré
+# à l'image nginx officielle, qui substituerait aussi $host/$remote_addr
+# etc. (variables Nginx, pas des variables d'environnement) et casserait
+# la config.
+#
+# ⚠️  Aucune authentification réelle : quiconque atteint ce port navigue
+# avec l'identité TEST_X_USER. Réservé au réseau de test isolé
+# (192.168.56.0/24), jamais à exposer au-delà.
+
+worker_processes 1;
+events { worker_connections 512; }
+
+http {
+    upstream ui_backend {
+        server ui:80;
+    }
+
+    server {
+        listen 80;
+
+        location / {
+            proxy_pass         http://ui_backend;
+            proxy_set_header   Host              $host;
+            proxy_set_header   X-Real-IP         $remote_addr;
+            proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+            proxy_set_header   X-User            "__TEST_X_USER__";
+        }
+    }
+}

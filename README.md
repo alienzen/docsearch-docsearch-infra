@@ -163,7 +163,10 @@ le README de `docsearch-api` pour le détail des routes `/admin/*`.
 
 Sans SSO configuré (dev/test), voir
 [HOWTO-simuler-utilisateur.md](HOWTO-simuler-utilisateur.md) pour
-simuler un utilisateur (et donc accéder à `/admin.html`).
+simuler un utilisateur (et donc accéder à `/admin.html`). Pour la
+syntaxe des motifs glob des filtres de sous-dossiers (liste noire/liste
+blanche), voir
+[HOWTO-filtres-sous-dossiers.md](HOWTO-filtres-sous-dossiers.md).
 
 ## Nom de l'index Elasticsearch
 

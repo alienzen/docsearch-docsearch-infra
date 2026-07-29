@@ -7,6 +7,14 @@ détail technique de chacune, voir le README du dépôt concerné
 [docsearch-ui](../docsearch-ui/README.md)) ou ce dépôt pour
 l'orchestration.
 
+**Deux interfaces coexistent** le temps de la migration vers le Système de
+Design de l'État : `docsearch-ui` (HTML/JS, port 8080, en service) et
+[docsearch-ui-vue](../docsearch-ui-vue/README.md) (Vue 3 + DSFR, port
+8081, en recette). Les fonctionnalités ci-dessous sont celles du produit ;
+les écarts encore assumés par la nouvelle interface — thèmes de couleur
+maison et gabarits d'affichage, tous deux retirés — sont listés dans son
+README.
+
 ## Recherche
 
 - **Recherche full-text fédérée** sur toutes les sources (fichiers, SQL,
@@ -52,9 +60,6 @@ l'orchestration.
   installation où cette maquette pourrait être prise pour une
   fonctionnalité réelle. Voir `docsearch-docs/proposition_docsearch.docx`
   pour l'option envisagée.
-- **Gabarits d'affichage des résultats** configurables (6 styles :
-  défaut, compact, minimal, dense, essentiel, complet sans extrait),
-  assignables par source, composés champ par champ depuis l'admin.
 - **Mesure de satisfaction** : pouce haut/bas par recherche, popup NPS
   occasionnelle, suggestions libres, tracking de clic sur les résultats
   (toujours actif, signal passif) — chaque signal individuellement
@@ -104,8 +109,7 @@ l'orchestration.
 - **Gestion des sources** fichiers/SQL/web : création, retrait, libellé,
   description, activation OCR (fichiers) — plus une vue unifiée «
   Toutes les sources » avec bascules indépendantes « Recherche » et «
-  Collections » et choix du gabarit d'affichage, tous types de source
-  confondus.
+  Collections », tous types de source confondus.
 - **Purge d'index** ciblée par motif de chemin (dry-run par défaut) et
   **déclenchement de scan** d'indexation à la demande.
 - **Statistiques de recherche** (`stats.html`) : volumétrie, requêtes
@@ -113,8 +117,12 @@ l'orchestration.
   actions d'administration.
 - **Bascules d'interface** granulaires : assistant IA, pied de page,
   liens Administration/Statistiques, export, aide, collections,
-  mots-clés personnalisés, alertes — chacune indépendamment activable/
-  désactivable, effectives immédiatement.
+  mots-clés personnalisés, alertes, tri, badge utilisateur, animation
+  d'accueil — chacune indépendamment activable/désactivable, effectives
+  immédiatement.
+- **Personnalisation** : bloc-marque, titre et sous-titre d'en-tête,
+  favicon, description et mention de bas de page, chemin affiché par le
+  bouton « Copier le chemin ».
 - **Mode test sans authentification** (`ADMIN_AUTH_DISABLED`), délibérément
   bruyant (bannière + log à chaque requête) pour ne jamais être oublié
   en production.

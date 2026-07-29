@@ -1,0 +1,248 @@
+# HOWTO — Créer une source SQL
+
+Une "source SQL" = le résultat d'une requête `SELECT` (PostgreSQL ou
+MySQL) indexé dans son propre index Elasticsearch, une ligne = un
+document — voir `sql_sources_config.py` (dupliqué à l'identique dans
+`docsearch-ingestion/app/` et `docsearch-api/app/`). Contrairement à une
+source fichier, il n'y a ni dossier ni watcher événementiel : `sql_worker.py`
+relit **intégralement** la requête à chaque passage (upsert de chaque
+ligne + réconciliation, voir étape 4). Pas de source par défaut non plus
+— une installation sans source SQL enregistrée n'en traite simplement
+aucune.
+
+## 1. Préparer la connexion (`connection_ref`)
+
+`connection_ref` est toujours un **nom**, jamais le DSN lui-même — le
+mot de passe ne doit jamais transiter par Redis. Deux méthodes,
+interchangeables, au même statut (aucune dépréciée) :
+
+### Méthode 1 — variable d'environnement (historique)
+
+```bash
+# docsearch-infra/.env
+CLIENTS_DB_DSN=postgresql+psycopg2://user:motdepasse@host:5432/dbname
+FACTURES_DB_DSN=mysql+pymysql://user:motdepasse@host:3306/dbname
+```
+
+Nécessite `docker compose up`/`restart` pour prendre effet (nouvelle
+variable d'environnement = nouveau conteneur).
+
+### Méthode 2 — DSN chiffré via le panneau admin (dynamique, sans redémarrage)
+
+```bash
+curl -X POST http://localhost:8000/admin/sql-dsns \
+  -H "X-User: alice.admin" -H "Content-Type: application/json" \
+  -d '{"name": "CLIENTS_PG_DSN", "dsn": "postgresql+psycopg2://user:motdepasse@host:5432/dbname"}'
+```
+
+Ou dans l'admin UI : panneau "Sources SQL" > section "DSN chiffrés".
+Le DSN est chiffré (Fernet) avant stockage dans Redis — jamais réexposé
+en clair après coup (seul un indice schéma+hôte reste consultable via
+`GET /admin/sql-dsns`). Nécessite `DSN_ENCRYPTION_KEY` (identique côté
+`docsearch-api` ET `docsearch-ingestion`, voir `.env.example`) :
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# → coller le résultat dans DSN_ENCRYPTION_KEY= (.env), puis redémarrer une fois
+```
+
+Pas de raccourci `manage.sh` pour cette méthode — uniquement API/admin UI.
+
+⚠️ **Priorité** : si une variable d'environnement du même nom existe
+(méthode 1), elle est **toujours** prioritaire sur un DSN dynamique du
+même nom (méthode 2) — voir `sql_indexer._resolve_dsn()`.
+
+Dans les deux cas : préférer un compte SQL **en lecture seule**,
+restreint à la ou aux tables interrogées.
+
+## 2. Écrire la requête et le mapping colonnes → champs ES
+
+Chaque colonne à indexer doit apparaître dans `fields`, sous la forme
+`{"column": ..., "es_field": ..., "es_type": ...}` :
+
+| `es_type` possible | Remarque |
+|---|---|
+| `keyword` | valeur exacte, facettable |
+| `text` | plein texte ; seul type acceptant `"analyzer"` (ex. `french`) |
+| `long`, `double` | numérique |
+| `date` | — |
+| `boolean` | facettable |
+
+- `id_column` doit obligatoirement figurer dans `fields` (sert de
+  `_id` du document ES — c'est ce qui permet l'upsert et la
+  réconciliation, voir étape 4).
+- `"facet": true` n'est accepté que pour `keyword`/`boolean` (une
+  agrégation `terms` sur `text` échouerait, faute de `doc_values`) —
+  ajoute une section de filtre dans la sidebar de recherche
+  (`facet_label` optionnel pour le titre affiché, sinon le nom du
+  champ ES est utilisé tel quel).
+
+Exemple de mapping :
+
+```json
+[
+  {"column": "id",    "es_field": "id",    "es_type": "keyword"},
+  {"column": "nom",   "es_field": "nom",   "es_type": "text", "analyzer": "french"},
+  {"column": "email", "es_field": "email", "es_type": "keyword"},
+  {"column": "actif", "es_field": "actif", "es_type": "boolean", "facet": true, "facet_label": "Actif"}
+]
+```
+
+## 3. Enregistrer la source
+
+### a. Script `manage.sh`
+
+```bash
+cd docsearch-infra
+./manage.sh add-sql-source clients postgresql CLIENTS_DB_DSN \
+  "SELECT id, nom, email, actif FROM clients WHERE actif = true" id clients_sql \
+  '[{"column":"id","es_field":"id","es_type":"keyword"},
+    {"column":"nom","es_field":"nom","es_type":"text","analyzer":"french"},
+    {"column":"email","es_field":"email","es_type":"keyword"},
+    {"column":"actif","es_field":"actif","es_type":"boolean","facet":true,"facet_label":"Actif"}]' \
+  --poll-interval 300 --label Clients
+```
+
+```text
+Usage : ./manage.sh add-sql-source <nom> <postgresql|mysql> <connection_ref> <requête_sql> <id_column> <index_es> <fields_json> [--poll-interval secondes] [--label <libellé>]
+```
+
+### b. Panneau admin "Sources SQL" (`admin.html`)
+
+Formulaire complet : nom, type de base, `connection_ref` (autocomplété
+avec les DSN dynamiques déjà enregistrés), index ES, colonne ID,
+intervalle de polling, libellé/description, requête SQL (zone de
+texte), puis le tableau de mapping colonnes → champs ES ligne par
+ligne (bouton "+ Ajouter une colonne") — plus besoin d'écrire le JSON
+du mapping à la main. Le même formulaire sert à la création et à la
+modification d'une source existante.
+
+### c. API directement
+
+```bash
+curl -X POST http://localhost:8000/admin/sql-sources \
+  -H "X-User: alice.admin" -H "Content-Type: application/json" \
+  -d '{
+    "name": "clients", "db_type": "postgresql", "connection_ref": "CLIENTS_DB_DSN",
+    "query": "SELECT id, nom, email, actif FROM clients WHERE actif = true",
+    "id_column": "id", "es_index": "clients_sql",
+    "fields": [
+      {"column": "id", "es_field": "id", "es_type": "keyword"},
+      {"column": "nom", "es_field": "nom", "es_type": "text", "analyzer": "french"},
+      {"column": "email", "es_field": "email", "es_type": "keyword"},
+      {"column": "actif", "es_field": "actif", "es_type": "boolean", "facet": true, "facet_label": "Actif"}
+    ],
+    "poll_interval_seconds": 300, "label": "Clients"
+  }'
+```
+
+Règles de validation (`sql_sources_config.add_source()`), valables
+pour les trois méthodes :
+
+- **nom** et **index ES** : mêmes contraintes que les sources fichiers
+  (minuscules, chiffres, `-`/`_`, jamais vide).
+- **index ES** : ne doit être utilisé par aucune autre source SQL **ni
+  par aucune source fichier** (un même index avec deux mappings
+  incompatibles serait incohérent) — erreur 400 sinon.
+- **`poll_interval_seconds` >= 10** — évite de marteler la base.
+- `db_type` doit correspondre au préfixe réel du DSN résolu
+  (`postgresql://`/`postgresql+...` ou `mysql://`/`mysql+...`),
+  vérifié avant même de tenter la connexion.
+
+⚠️ Même piège que pour les sources fichiers : `add_source()`
+**remplace entièrement** l'entrée si le nom existe déjà — modifier une
+source existante en ligne de commande nécessite de retransmettre
+`fields`/`poll_interval_seconds`/etc. en entier (l'API relit
+`searchable`/`collectable` au préalable pour ne pas les réinitialiser,
+mais rien d'autre).
+
+La source est prise en compte par `sql-worker` sous ~10s
+(`SQL_SOURCES_CACHE_TTL`), sans redémarrage.
+
+## 4. Déclencher un premier passage
+
+Pas besoin d'attendre `poll_interval_seconds` pour tester une source
+qui vient d'être ajoutée :
+
+```bash
+./manage.sh run-sql-source clients
+```
+
+Chaque passage (manuel ou automatique) fait **deux choses** en une
+seule lecture de la requête (`sql_indexer.py`) :
+
+1. **Upsert** de chaque ligne — jamais de "skip if exists" : contrairement
+   à un fichier, une ligne SQL peut changer de contenu sans changer
+   d'identité (`id_column`).
+2. **Réconciliation** : tout `_id` présent dans l'index ES mais absent
+   du nouveau résultat est supprimé (ligne supprimée côté SQL depuis le
+   dernier passage).
+
+⚠️ Garde-fou intégré : un passage ne supprime jamais plus de la moitié
+d'un index déjà significatif — un résultat vide ou tronqué (DSN cassé,
+permissions révoquées, requête qui échoue silencieusement côté driver)
+ne purge donc jamais tout un index d'un coup.
+
+## 5. Vérifier
+
+```bash
+./manage.sh list-sql-sources
+curl -s http://localhost:9200/clients_sql/_count?pretty
+```
+
+⚠️ `./manage.sh status` / `GET /admin/status` ne couvrent que les
+sources **fichiers** (`_sources_status()` ne boucle que sur
+`file_sources_config`). Pour voir le nombre de documents d'une source
+SQL, utiliser `list-sql-sources` ci-dessus ou la vue unifiée :
+
+```bash
+curl -H "X-User: alice.admin" http://localhost:8000/admin/all-sources | jq
+```
+
+(fusionne fichier/SQL/web avec compte de documents + taille sur disque
+— aussi visible dans le panneau admin "Toutes les sources").
+
+## Réglages optionnels, une fois la source créée
+
+- **Libellé / description** : `POST /admin/sql-sources/{name}/label`
+  ou `/description`, ou directement dans le tableau du panneau "Sources
+  SQL".
+- **searchable / collectable** : panneau "Toutes
+  les sources", ou
+  `POST /admin/all-sources/{name}/{searchable,collectable}?type=sql`.
+- **Changer la requête, le mapping ou `poll_interval_seconds`** : pas
+  de route dédiée — repasser par le formulaire d'édition de l'admin UI
+  (pré-rempli) ou réappeler `add-sql-source`/`POST /admin/sql-sources`
+  avec l'ensemble des champs (l'entrée est remplacée en entier, voir
+  l'avertissement à l'étape 3).
+
+## Retirer une source SQL
+
+```bash
+./manage.sh remove-sql-source clients
+```
+
+Retire uniquement l'entrée du registre (`sql-worker` arrête de
+l'interroger) — **ne supprime ni l'index Elasticsearch ni les
+documents déjà indexés**.
+
+Si le DSN dynamique (méthode 2) associé n'est plus utilisé par aucune
+autre source, le retirer aussi :
+
+```bash
+curl -X DELETE http://localhost:8000/admin/sql-dsns/CLIENTS_PG_DSN -H "X-User: alice.admin"
+```
+
+⚠️ Ni `remove-sql-source` ni `DELETE /admin/sql-dsns/{name}` ne
+vérifient les dépendances inverses — retirer un DSN encore référencé
+par une autre source SQL la fera simplement échouer à son prochain
+passage (sauf variable d'environnement de secours du même nom).
+
+## Voir aussi
+
+- [HOWTO-creer-source-fichier.md](HOWTO-creer-source-fichier.md) —
+  équivalent pour les sources fichiers
+- [HOWTO-creer-source-web.md](HOWTO-creer-source-web.md) — équivalent
+  pour les sources web
+- [HOWTO-commandes-utiles.md](HOWTO-commandes-utiles.md) — démarrer,
+  vérifier, rebuilder

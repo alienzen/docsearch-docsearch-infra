@@ -34,9 +34,18 @@ vers l'API sans le modifier (voir `docsearch-ui/nginx.conf:145`).
 
 ## 2. Proxy de test local (naviguer au navigateur, sans extension)
 
-Un service Nginx dédié (`docker-compose.dev-user-proxy.yml`) injecte
-`X-User` sur toutes les requêtes vers `ui` — reproduit ce que fait Nginx
-en prod après SSO, mais avec une identité fixe. Évite toute dépendance à
+Deux services Nginx dédiés (`docker-compose.dev-user-proxy.yml`) injectent
+`X-User` sur toutes les requêtes — reproduit ce que fait Nginx en prod
+après SSO, mais avec une identité fixe.
+
+| Port | Interface visée | Service |
+|------|-----------------|---------|
+| 8090 | `ui` (interface historique, HTML/JS) | `dev-user-proxy` |
+| 8091 | `ui-vue` (migration Vue/DSFR, profil `dev`) | `dev-user-proxy-vue` |
+
+Les deux proxys existent pour comparer **la même identité des deux côtés**
+pendant la migration. Attaquer directement les ports 8080/8081 depuis un
+navigateur renvoie 401 : rien n'y injecte `X-User`. Évite toute dépendance à
 une extension de navigateur (ModHeader a été retiré du Chrome Web Store
 et d'Edge début juillet 2026 pour collecte de données non consentie —
 voir les alternatives ci-dessous si besoin d'un outil plus flexible).
@@ -54,11 +63,13 @@ TEST_X_USER=bob.user docker compose -f docker-compose.dev-user-proxy.yml up -d -
 docker compose -f docker-compose.dev-user-proxy.yml down
 ```
 
-Puis naviguer sur `http://192.168.56.101:8090/` (ou `http://localhost:8090/`
-si le navigateur tourne sur la même machine que Docker).
+Puis naviguer sur `http://192.168.56.101:8090/` — ou `:8091` pour
+l'interface Vue (ou `http://localhost:…` si le navigateur tourne sur la
+même machine que Docker).
 
-⚠️ Ce conteneur est **partagé** : changer `TEST_X_USER` change l'identité
-pour toute session déjà ouverte sur le port 8090, pas seulement la vôtre.
+⚠️ Ces conteneurs sont **partagés** : changer `TEST_X_USER` change
+l'identité pour toute session déjà ouverte sur les ports 8090 et 8091, pas
+seulement la vôtre.
 Aucune authentification réelle — réservé au réseau de test isolé
 (`192.168.56.0/24`), jamais à exposer au-delà.
 

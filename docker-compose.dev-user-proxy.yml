@@ -17,20 +17,42 @@
 #
 # Nécessite que la stack principale (service "ui") tourne déjà sur
 # docsearch-net.
+#
+# Deux proxys, un par interface, pour pouvoir comparer la même identité
+# des deux côtés pendant la migration Vue/DSFR :
+#   8090 → ui      (interface historique)
+#   8091 → ui-vue  (nouvelle interface, profil "dev" du compose principal)
 services:
   dev-user-proxy:
     image: nginx:1.27-alpine
     container_name: docsearch-dev-user-proxy
     environment:
       TEST_X_USER: ${TEST_X_USER:-alice.admin}
+      TEST_UI_TARGET: ui
     volumes:
       - ./nginx/dev-user-proxy.conf.template:/etc/nginx/custom-templates/dev-user-proxy.conf.template:ro
-    command: >
-      sh -c "sed \"s/__TEST_X_USER__/$$TEST_X_USER/g\"
+    command: &proxy-command >
+      sh -c "sed -e \"s/__TEST_X_USER__/$$TEST_X_USER/g\"
+      -e \"s/__TEST_UI_TARGET__/$$TEST_UI_TARGET/g\"
       /etc/nginx/custom-templates/dev-user-proxy.conf.template > /etc/nginx/nginx.conf
       && exec nginx -g 'daemon off;'"
     ports:
       - "8090:80"
+    networks:
+      - docsearch-net
+    restart: unless-stopped
+
+  dev-user-proxy-vue:
+    image: nginx:1.27-alpine
+    container_name: docsearch-dev-user-proxy-vue
+    environment:
+      TEST_X_USER: ${TEST_X_USER:-alice.admin}
+      TEST_UI_TARGET: ui-vue
+    volumes:
+      - ./nginx/dev-user-proxy.conf.template:/etc/nginx/custom-templates/dev-user-proxy.conf.template:ro
+    command: *proxy-command
+    ports:
+      - "8091:80"
     networks:
       - docsearch-net
     restart: unless-stopped

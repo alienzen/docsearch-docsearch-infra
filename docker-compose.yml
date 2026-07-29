@@ -531,6 +531,32 @@ services:
       - docsearch-net
     restart: unless-stopped
 
+  # ── UI Vue 3 + DSFR (migration en cours, recette) ─────────────
+  # Nouvelle interface, servie EN PARALLÈLE de "ui" le temps de la
+  # migration : port 8081 pour la recette, 8080 reste l'interface en
+  # service. Profil "dev" uniquement — rien ne change en production
+  # tant que la bascule n'est pas décidée.
+  #
+  # Dépend de "ui" : les pages pas encore migrées (chat, admin, stats)
+  # sont proxifiées vers ce conteneur plutôt que recopiées dans l'image
+  # (voir upstream ui_legacy dans docsearch-ui-vue/nginx.conf).
+  ui-vue:
+    build:
+      context: ../docsearch-ui-vue
+      dockerfile: Dockerfile
+    container_name: docsearch-ui-vue
+    profiles: ["dev"]
+    ports:
+      - "8081:80"
+    depends_on:
+      api:
+        condition: service_healthy
+      ui:
+        condition: service_started
+    networks:
+      - docsearch-net
+    restart: unless-stopped
+
   # ── Nginx (reverse proxy : UI statique + API + SSL) ───────────
   nginx:
     image: nginx:1.27-alpine

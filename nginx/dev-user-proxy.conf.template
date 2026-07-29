@@ -20,8 +20,11 @@ worker_processes 1;
 events { worker_connections 512; }
 
 http {
+    # Conteneur d'interface visé — "ui" (historique) par défaut, ou
+    # "ui-vue" pendant la recette de la migration Vue/DSFR. Substitué
+    # par sed au démarrage, comme le nom d'utilisateur.
     upstream ui_backend {
-        server ui:80;
+        server __TEST_UI_TARGET__:80;
     }
 
     server {

@@ -42,8 +42,16 @@ l'orchestration.
   recherche.
 - **Mots-clés personnalisés** ajoutables/retirables sur un document par
   les utilisateurs, réappliqués automatiquement à chaque réindexation.
-- **Assistant conversationnel (RAG)** — page dédiée (`chat.html`),
-  interroge les documents indexés en langage naturel.
+- **Assistant conversationnel (RAG)** — ⚠️ **maquette uniquement, non
+  fonctionnelle.** La page dédiée (`chat.html`) illustre l'expérience
+  visée avec des réponses écrites à l'avance : elle n'interroge PAS les
+  documents indexés. L'endpoint `/ask` n'existe pas côté docsearch-api,
+  et aucun modèle de langage n'est branché. Le lien « Assistant IA » de
+  l'en-tête de recherche étant AFFICHÉ par défaut (`chat_enabled` vaut
+  `true`), le masquer depuis l'admin est recommandé sur toute
+  installation où cette maquette pourrait être prise pour une
+  fonctionnalité réelle. Voir `docsearch-docs/proposition_docsearch.docx`
+  pour l'option envisagée.
 - **Gabarits d'affichage des résultats** configurables (6 styles :
   défaut, compact, minimal, dense, essentiel, complet sans extrait),
   assignables par source, composés champ par champ depuis l'admin.

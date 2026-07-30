@@ -1,41 +1,50 @@
 # HOWTO — Personnaliser les cartes de résultat par source
 
-> ⚠️ **Ne vaut que pour l'interface historique `docsearch-ui`** (port 8080),
-> celle en service aujourd'hui.
->
-> Le mécanisme décrit ici — `custom-sources.css`, `custom-sources.js`, le
-> registre `sourceCardHooks` et les sélecteurs `.result-card[data-source]` —
-> repose sur `results.js` et sur le CSS maison de `docsearch-ui/public/`.
-> Aucun des deux n'existe dans [docsearch-ui-vue](../docsearch-ui-vue/README.md)
-> (port 8081, en recette), qui rend ses cartes en composants Vue stylés par
-> les classes DSFR : sa carte ne porte ni `data-source`, ni les classes
-> `.result-card*` ciblées ci-dessous.
->
-> **Il n'existe pour l'instant aucun équivalent côté Vue.** Toute
-> personnalisation faite en suivant ce document sera donc à refaire au
-> moment de la bascule, sous une forme qui reste à définir.
-
 Chaque résultat de recherche porte une clé technique de source (`r.source`,
 ex. `sharepoint_rh` — distincte du libellé affiché, voir `name` dans
 `file_sources_config.py` / `web_sources_config.py` / `sql_sources_config.py`,
 dupliqués à l'identique dans `docsearch-api/app/` et
-`docsearch-ingestion/app/`). Deux fichiers dédiés, dans `docsearch-ui/public/`,
-permettent de personnaliser l'affichage et le comportement des `.result-card`
-source par source, sans toucher au code central (`index.css`, `results.js`) —
-donc sans risque de perte à une future mise à jour de ces fichiers.
+`docsearch-ingestion/app/`). Deux fichiers statiques, servis tels quels,
+permettent de personnaliser les cartes source par source **sans toucher au
+code central** — donc sans risque de perte à une mise à jour — et **sans
+reconstruire l'application** : on les édite dans le conteneur, on recharge
+la page.
 
-## 1. Trouver la clé technique d'une source
+## Repérer son interface
 
-Trois façons de la récupérer :
+Deux interfaces coexistent le temps de la migration vers le Système de
+Design de l'État. Le mécanisme est le même dans son principe, mais **les
+fichiers et les sélecteurs diffèrent** : vérifier laquelle est servie avant
+de commencer.
 
-- Inspecteur du navigateur : attribut `data-source` sur l'élément
-  `.result-card`.
-- Admin des sources (panneau "Toutes les sources", vue unifiée
-  fichier/SQL/web) : colonne "nom".
+| Interface | Port | Statut | Section |
+|---|---|---|---|
+| `docsearch-ui` (HTML/JS) | 8080 | en service | [§ A](#a--interface-historique-docsearch-ui) |
+| [`docsearch-ui-vue`](../docsearch-ui-vue/README.md) (Vue + DSFR) | 8081 | en recette | [§ B](#b--interface-vue-docsearch-ui-vue) |
+
+> À la bascule, la section A deviendra caduque et pourra être retirée avec
+> le dépôt `docsearch-ui`. La table de correspondance des sélecteurs, en fin
+> de section B, sert précisément à transposer les personnalisations
+> existantes à ce moment-là.
+
+## Trouver la clé technique d'une source
+
+Commun aux deux interfaces. Trois façons de la récupérer :
+
+- Inspecteur du navigateur : attribut `data-source` sur la carte.
+- Admin des sources (panneau « Toutes les sources », vue unifiée
+  fichier/SQL/web) : colonne « nom ».
 - Directement dans le registre (`name` du `Source` renvoyé par
   `get_all_sources()`).
 
-## 2. Personnalisation visuelle (CSS)
+---
+
+# A — Interface historique (`docsearch-ui`)
+
+Deux fichiers dédiés dans `docsearch-ui/public/`, hors du code central
+(`index.css`, `results.js`).
+
+## A.1 Personnalisation visuelle (CSS)
 
 Fichier : `docsearch-ui/public/css/custom-sources.css`, chargé après
 `index.css` (voir `index.html`) — toute règle ici l'emporte sur le style par
@@ -53,7 +62,7 @@ défaut.
 N'importe quel sous-élément de la carte peut être ciblé de la même façon
 (`.ext-icon`, `.source-badge`, `.result-meta`, `.snippet`, ...).
 
-## 3. Personnalisation comportementale (JS)
+## A.2 Personnalisation comportementale (JS)
 
 Fichier : `docsearch-ui/public/js/custom-sources.js`. On y enregistre un hook
 par source dans l'objet global `sourceCardHooks` (déclaré dans
@@ -90,15 +99,107 @@ restructuration complète. Pour une mise en page radicalement différente
 selon la source, il faudrait une fonction de rendu dédiée par source
 (duplication du gabarit de carte) — hors du périmètre de ce hook léger.
 
-## 4. Vérifier
+## A.3 Vérifier
 
 Comme pour tout changement dans `docsearch-ui/public/` : reconstruire le
 conteneur `ui` (le `Dockerfile` recopie `public/` dans l'image à la
 construction, pas de bind-mount en dev), puis vider le cache du navigateur
-(les fichiers CSS/JS statiques sont mis en cache côté client) avant de
-tester.
+avant de tester.
 
 ```bash
 cd docsearch-infra
 docker compose --profile dev up -d --build ui
 ```
+
+---
+
+# B — Interface Vue (`docsearch-ui-vue`)
+
+Deux fichiers dans `docsearch-ui-vue/public/`, servis tels quels par Nginx :
+ils **n'entrent pas dans le bundle**. On peut donc les éditer directement
+dans le conteneur, à `/usr/share/nginx/html/`, et recharger la page — sans
+reconstruire l'application.
+
+## B.1 Personnalisation visuelle (CSS)
+
+Fichier : `custom-sources.css`. Il est référencé **en fin de `<body>`**, donc
+après la feuille générée par Vite dans `<head>` : à spécificité égale, ce
+qui est écrit ici l'emporte.
+
+```css
+.ds-result[data-source='sharepoint_rh'] .ds-result__title {
+  color: var(--text-title-blue-france);
+}
+```
+
+Préférer les **jetons de couleur DSFR** (`var(--text-title-blue-france)`,
+`var(--background-alt-grey)`…) aux couleurs en dur : eux seuls tiennent le
+contraste en thème clair comme en thème sombre.
+
+## B.2 Personnalisation du contenu (registre déclaratif)
+
+Fichier : `custom-sources.js`. Il publie un objet, une entrée par source :
+
+```js
+window.docsearchSourceCards = {
+  sharepoint_rh: { badge: 'RH', titlePrefix: '[RH] ', accent: '#0c447c' },
+}
+```
+
+| Clé | Effet |
+|---|---|
+| `badge` | badge supplémentaire, à côté de l'extension |
+| `titlePrefix` | texte inséré devant le titre du document |
+| `accent` | couleur du liseré gauche de la carte |
+
+Toutes facultatives. Les textes sont rendus **comme du texte**, donc
+échappés : y placer du HTML l'afficherait littéralement. Ce que le registre
+ne couvre pas relève de `custom-sources.css`.
+
+### Pourquoi un registre et non un hook
+
+C'est la différence de fond avec la section A. Sous Vue, tout ce qu'un hook
+écrirait dans le DOM est **écrasé au rendu suivant** — changement de page de
+résultats, bascule de la vue compacte, dépli d'une carte. Un registre de
+valeurs, lu *pendant* le rendu, est idempotent par construction et survit à
+ces trois cas (vérifié).
+
+On y perd l'arbitraire du JS ; on y gagne une personnalisation qui ne
+disparaît pas au premier clic — panne difficile à diagnostiquer s'il avait
+fallu la subir.
+
+## B.3 Correspondance des sélecteurs
+
+Pour transposer une personnalisation écrite pour la section A :
+
+| `docsearch-ui` | `docsearch-ui-vue` |
+|---|---|
+| `.result-card` | `.ds-result` |
+| `.result-title` | `.ds-result__title` |
+| `.result-meta` | `.ds-result__meta` |
+| `.snippet` | `.ds-result__snippet` |
+| `.ext-icon` | `.ds-result .fr-badge` |
+| `sourceCardHooks['x'] = fn` | `window.docsearchSourceCards.x = { … }` |
+
+L'attribut `data-source` est le seul élément commun aux deux interfaces.
+
+## B.4 Vérifier
+
+Sans reconstruction, sur un conteneur qui tourne déjà :
+
+```bash
+docker exec -it docsearch-ui-vue vi /usr/share/nginx/html/custom-sources.css
+```
+
+Puis recharger la page (vider le cache du navigateur si le changement ne se
+voit pas). Pour rendre le réglage permanent, le reporter dans
+`docsearch-ui-vue/public/` et reconstruire :
+
+```bash
+cd docsearch-infra
+docker compose --profile dev up -d --build ui-vue
+```
+
+⚠️ Une modification faite uniquement dans le conteneur est **perdue à la
+reconstruction suivante**. Le dossier `public/` du dépôt reste la source de
+vérité.

@@ -531,14 +531,24 @@ services:
 
   # ── Nginx (production uniquement) ─────────────────────────
   # ── UI (interface web statique) ──────────────────────────────
+  # ── UI historique (HTML/JS) — REPLI seulement ─────────────────
+  # Remplacée par ui-vue. Conservée quelque temps comme porte de sortie :
+  #   docker compose --profile legacy up -d ui   → http://<hôte>:8082
+  # puis repointer "ui_backend" dans nginx/nginx.conf et redémarrer nginx.
+  #
+  # Profil "legacy" à part, et non "dev" : les services d'un profil actif
+  # sont CONSTRUITS par un `up --build`, ce qui exigerait que
+  # ../docsearch-ui soit cloné sur chaque poste — or les guides
+  # d'installation ne le font plus cloner. À retirer, avec le port 8082,
+  # une fois la bascule éprouvée.
   ui:
     build:
       context: ../docsearch-ui
       dockerfile: Dockerfile
     container_name: docsearch-ui
-    profiles: ["dev", "production"]
+    profiles: ["legacy"]
     ports:
-      - "8080:80"   # accès direct en dev ; en prod, passer par nginx (port 80/443)
+      - "8082:80"
     depends_on:
       api:
         condition: service_healthy
@@ -546,23 +556,22 @@ services:
       - docsearch-net
     restart: unless-stopped
 
-  # ── UI Vue 3 + DSFR (recette avant bascule) ───────────────────
-  # Nouvelle interface, servie EN PARALLÈLE de "ui" : port 8081 pour la
-  # recette, 8080 reste l'interface en service. Profil "dev" uniquement
-  # — rien ne change en production tant que la bascule n'est pas
-  # décidée.
+  # ── UI Vue 3 + DSFR — interface en service ────────────────────
+  # Sert toutes les pages depuis son propre build Vite multi-entrées et
+  # proxifie l'API, donc utilisable seule en dev. En production, c'est
+  # elle que vise "ui_backend" dans nginx/nginx.conf.
   #
-  # Toutes les pages sont migrées : ce service ne dépend plus de "ui",
-  # il est autonome. Le jour de la bascule, il suffit de lui donner le
-  # port 8080 et le profil "production", puis de retirer "ui".
+  # Le build est MULTI-PAGES et non une SPA : chaque page reste un
+  # fichier physique, seul moyen de conserver les `auth_request` d'Nginx
+  # page par page (voir docsearch-ui-vue/README.md).
   ui-vue:
     build:
       context: ../docsearch-ui-vue
       dockerfile: Dockerfile
     container_name: docsearch-ui-vue
-    profiles: ["dev"]
+    profiles: ["dev", "production"]
     ports:
-      - "8081:80"
+      - "8080:80"   # accès direct en dev ; en prod, passer par nginx (port 80/443)
     depends_on:
       api:
         condition: service_healthy

@@ -29,26 +29,35 @@ curl -H "X-User: alice.admin" http://localhost:8000/admin/status
 curl -H "X-User: bob.user"    http://localhost:8000/admin/status   # → 403
 ```
 
-Fonctionne aussi via l'UI (port 8080), qui relaie le header tel quel
-vers l'API sans le modifier (voir `docsearch-ui/nginx.conf:145`).
+Fonctionne aussi via l'UI (port 8080), qui relaie le header tel quel vers
+l'API sans le modifier (voir `docsearch-ui-vue/nginx.conf`).
 
 ## 2. Proxy de test local (naviguer au navigateur, sans extension)
 
 Deux services Nginx dédiés (`docker-compose.dev-user-proxy.yml`) injectent
 `X-User` sur toutes les requêtes — reproduit ce que fait Nginx en prod
-après SSO, mais avec une identité fixe.
+après SSO, mais avec une identité fixe. Évite toute dépendance à une
+extension de navigateur (ModHeader a été retiré du Chrome Web Store et
+d'Edge début juillet 2026 pour collecte de données non consentie — voir
+les alternatives ci-dessous si besoin d'un outil plus flexible).
 
-| Port | Interface visée | Service |
-|------|-----------------|---------|
-| 8090 | `ui` (interface historique, HTML/JS) | `dev-user-proxy` |
-| 8091 | `ui-vue` (migration Vue/DSFR, profil `dev`) | `dev-user-proxy-vue` |
+| Port | Interface visée | Service | Démarrage |
+|------|-----------------|---------|-----------|
+| 8090 | `ui-vue` — interface en service | `dev-user-proxy` | par défaut |
+| 8091 | `ui` — interface historique | `dev-user-proxy-legacy` | `--profile legacy` |
 
-Les deux proxys existent pour comparer **la même identité des deux côtés**
-pendant la migration. Attaquer directement les ports 8080/8081 depuis un
-navigateur renvoie 401 : rien n'y injecte `X-User`. Évite toute dépendance à
-une extension de navigateur (ModHeader a été retiré du Chrome Web Store
-et d'Edge début juillet 2026 pour collecte de données non consentie —
-voir les alternatives ci-dessous si besoin d'un outil plus flexible).
+Attaquer directement le port 8080 depuis un navigateur renvoie 401 : rien
+n'y injecte `X-User`.
+
+Le proxy de repli est sous profil, comme le service qu'il vise : sans son
+amont démarré, Nginx ne le résout pas et le conteneur redémarrerait en
+boucle.
+
+```bash
+# Repli : l'ancienne interface et son proxy
+docker compose --profile legacy up -d ui
+docker compose -f docker-compose.dev-user-proxy.yml --profile legacy up -d
+```
 
 ```bash
 cd docsearch-infra
@@ -63,13 +72,12 @@ TEST_X_USER=bob.user docker compose -f docker-compose.dev-user-proxy.yml up -d -
 docker compose -f docker-compose.dev-user-proxy.yml down
 ```
 
-Puis naviguer sur `http://192.168.56.101:8090/` — ou `:8091` pour
-l'interface Vue (ou `http://localhost:…` si le navigateur tourne sur la
-même machine que Docker).
+Puis naviguer sur `http://192.168.56.101:8090/` (ou
+`http://localhost:8090/` si le navigateur tourne sur la même machine que
+Docker).
 
-⚠️ Ces conteneurs sont **partagés** : changer `TEST_X_USER` change
-l'identité pour toute session déjà ouverte sur les ports 8090 et 8091, pas
-seulement la vôtre.
+⚠️ Ce conteneur est **partagé** : changer `TEST_X_USER` change l'identité
+pour toute session déjà ouverte sur le port 8090, pas seulement la vôtre.
 Aucune authentification réelle — réservé au réseau de test isolé
 (`192.168.56.0/24`), jamais à exposer au-delà.
 

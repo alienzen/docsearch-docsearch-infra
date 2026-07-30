@@ -18,17 +18,19 @@
 # Nécessite que la stack principale (service "ui") tourne déjà sur
 # docsearch-net.
 #
-# Deux proxys, un par interface, pour pouvoir comparer la même identité
-# des deux côtés pendant la migration Vue/DSFR :
-#   8090 → ui      (interface historique)
-#   8091 → ui-vue  (nouvelle interface, profil "dev" du compose principal)
+# Deux proxys, un par interface. Le 8090 — celui qui est en signet —
+# mène à l'interface en service ; le 8091 reste braqué sur l'interface
+# historique le temps que le repli existe :
+#   8090 → ui-vue  (interface en service)
+#   8091 → ui      (interface historique, profil "legacy" — ne répond que
+#                   si ce service est démarré : voir docker-compose.yml)
 services:
   dev-user-proxy:
     image: nginx:1.27-alpine
     container_name: docsearch-dev-user-proxy
     environment:
       TEST_X_USER: ${TEST_X_USER:-alice.admin}
-      TEST_UI_TARGET: ui
+      TEST_UI_TARGET: ui-vue
     volumes:
       - ./nginx/dev-user-proxy.conf.template:/etc/nginx/custom-templates/dev-user-proxy.conf.template:ro
     command: &proxy-command >
@@ -42,12 +44,17 @@ services:
       - docsearch-net
     restart: unless-stopped
 
-  dev-user-proxy-vue:
+  # Braqué sur l'interface historique. Sous profil "legacy" comme le
+  # service qu'il vise : sans lui, Nginx ne résout pas l'amont "ui" au
+  # démarrage et le conteneur redémarre en boucle. À lancer avec le repli :
+  #   docker compose -f docker-compose.dev-user-proxy.yml --profile legacy up -d
+  dev-user-proxy-legacy:
     image: nginx:1.27-alpine
-    container_name: docsearch-dev-user-proxy-vue
+    profiles: ["legacy"]
+    container_name: docsearch-dev-user-proxy-legacy
     environment:
       TEST_X_USER: ${TEST_X_USER:-alice.admin}
-      TEST_UI_TARGET: ui-vue
+      TEST_UI_TARGET: ui
     volumes:
       - ./nginx/dev-user-proxy.conf.template:/etc/nginx/custom-templates/dev-user-proxy.conf.template:ro
     command: *proxy-command

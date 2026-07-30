@@ -4,16 +4,16 @@ Catalogue des fonctionnalités actuelles, tous dépôts confondus. Pour le
 détail technique de chacune, voir le README du dépôt concerné
 ([docsearch-api](../docsearch-api/README.md),
 [docsearch-ingestion](../docsearch-ingestion/README.md),
-[docsearch-ui](../docsearch-ui/README.md)) ou ce dépôt pour
+[docsearch-ui-vue](../docsearch-ui-vue/README.md)) ou ce dépôt pour
 l'orchestration.
 
-**Deux interfaces coexistent** le temps de la migration vers le Système de
-Design de l'État : `docsearch-ui` (HTML/JS, port 8080, en service) et
-[docsearch-ui-vue](../docsearch-ui-vue/README.md) (Vue 3 + DSFR, port
-8081, en recette). Les fonctionnalités ci-dessous sont celles du produit ;
-les écarts encore assumés par la nouvelle interface — thèmes de couleur
-maison et gabarits d'affichage, tous deux retirés — sont listés dans son
-README.
+L'interface est [docsearch-ui-vue](../docsearch-ui-vue/README.md), **Vue 3
+conforme au Système de Design de l'État**. Elle a remplacé `docsearch-ui`
+(HTML/JS sans build), dont le dépôt est conservé pour référence et
+mobilisable en repli (profil `legacy` du docker-compose). Deux
+fonctionnalités de l'ancienne interface n'ont pas été reprises et sont
+retirées du produit : les 7 thèmes de couleur maison, remplacés par le
+clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
 
 ## Recherche
 

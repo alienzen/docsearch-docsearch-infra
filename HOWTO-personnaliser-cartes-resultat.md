@@ -20,7 +20,7 @@ commencer.
 | Interface | Port | Statut | Section |
 |---|---|---|---|
 | [`docsearch-ui-vue`](../docsearch-ui-vue/README.md) (Vue + DSFR) | 8080 | **en service** | [§ A](#a--interface-vue-docsearch-ui-vue) |
-| `docsearch-ui` (HTML/JS) | 8082 | repli (`--profile legacy`) | [§ B](#b--interface-historique-docsearch-ui) |
+| `docsearch-ui` (HTML/JS) | 8082 | repli (`--profile dev --profile legacy`) | [§ B](#b--interface-historique-docsearch-ui) |
 
 > La section B ne sert plus qu'au repli : elle disparaîtra avec le service
 > `ui`. Si une personnalisation y existe encore, la transposer via la table
@@ -200,5 +200,5 @@ avant de tester.
 
 ```bash
 cd docsearch-infra
-docker compose --profile legacy up -d --build ui
+docker compose --profile dev --profile legacy up -d --build ui
 ```

@@ -44,7 +44,7 @@ les alternatives ci-dessous si besoin d'un outil plus flexible).
 | Port | Interface visée | Service | Démarrage |
 |------|-----------------|---------|-----------|
 | 8090 | `ui-vue` — interface en service | `dev-user-proxy` | par défaut |
-| 8091 | `ui` — interface historique | `dev-user-proxy-legacy` | `--profile legacy` |
+| 8091 | `ui` — interface historique | `dev-user-proxy-legacy` | profil `legacy`, voir plus bas |
 
 Attaquer directement le port 8080 depuis un navigateur renvoie 401 : rien
 n'y injecte `X-User`.
@@ -52,12 +52,6 @@ n'y injecte `X-User`.
 Le proxy de repli est sous profil, comme le service qu'il vise : sans son
 amont démarré, Nginx ne le résout pas et le conteneur redémarrerait en
 boucle.
-
-```bash
-# Repli : l'ancienne interface et son proxy
-docker compose --profile legacy up -d ui
-docker compose -f docker-compose.dev-user-proxy.yml --profile legacy up -d
-```
 
 ```bash
 cd docsearch-infra
@@ -75,6 +69,13 @@ docker compose -f docker-compose.dev-user-proxy.yml down
 Puis naviguer sur `http://192.168.56.101:8090/` (ou
 `http://localhost:8090/` si le navigateur tourne sur la même machine que
 Docker).
+
+```bash
+# Repli : l'ancienne interface et son proxy.
+# Les DEUX profils : "ui" dépend d'"api", qui vit dans "dev".
+docker compose --profile dev --profile legacy up -d ui
+docker compose -f docker-compose.dev-user-proxy.yml --profile legacy up -d
+```
 
 ⚠️ Ce conteneur est **partagé** : changer `TEST_X_USER` change l'identité
 pour toute session déjà ouverte sur le port 8090, pas seulement la vôtre.

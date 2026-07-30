@@ -533,7 +533,12 @@ services:
   # ── UI (interface web statique) ──────────────────────────────
   # ── UI historique (HTML/JS) — REPLI seulement ─────────────────
   # Remplacée par ui-vue. Conservée quelque temps comme porte de sortie :
-  #   docker compose --profile legacy up -d ui   → http://<hôte>:8082
+  #   docker compose --profile dev --profile legacy up -d ui  → :8082
+  #
+  # LES DEUX PROFILS sont nécessaires : "ui" déclare depends_on: api, qui
+  # appartient à "dev"/"production". Avec "legacy" seul, Compose refuse le
+  # projet (« service "ui" depends on undefined service "api" »). C'est
+  # cohérent : un repli s'active dans une pile qui tourne, jamais seul.
   # puis repointer "ui_backend" dans nginx/nginx.conf et redémarrer nginx.
   #
   # Profil "legacy" à part, et non "dev" : les services d'un profil actif

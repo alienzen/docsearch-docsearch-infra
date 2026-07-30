@@ -454,6 +454,21 @@ services:
       - docsearch-net
     restart: unless-stopped
 
+  # Test à échelle réduite (cc-publications-test.yml, ~1000 documents) pour
+  # valider la source "cc_publications" avant le crawl complet — commande
+  # "crawl" (une seule passe, PAS "schedule") : pas de restart, le
+  # conteneur s'arrête de lui-même une fois la passe terminée. Lancer avec
+  # "docker compose run --rm web-crawler-cc-publications-test". À retirer
+  # une fois la validation terminée.
+  web-crawler-cc-publications-test:
+    image: docker.elastic.co/integrations/crawler:latest
+    profiles: ["dev", "production"]
+    command: jruby bin/crawler crawl /config/cc-publications-test.yml
+    volumes:
+      - ./crawlers:/config:ro
+    networks:
+      - docsearch-net
+
   # ── API FastAPI ───────────────────────────────────────────
   api:
     build:
@@ -551,8 +566,6 @@ services:
     depends_on:
       api:
         condition: service_healthy
-      ui:
-        condition: service_started
     networks:
       - docsearch-net
     restart: unless-stopped

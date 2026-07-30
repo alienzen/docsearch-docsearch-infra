@@ -115,6 +115,15 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
 - **Statistiques de recherche** (`stats.html`) : volumétrie, requêtes
   fréquentes, recherches sans résultat, export, journal d'audit des
   actions d'administration.
+- **Ventilation par groupe d'utilisateurs** : recherches, avis
+  positifs/négatifs, score NPS, suggestions et recherches sans résultat
+  sont aussi présentés par groupe LDAP. Les groupes sont figés **à
+  l'écriture** de chaque événement, donc un changement de service ne
+  réécrit pas l'historique. Deux mises en garde figurent sur la page :
+  un utilisateur de plusieurs groupes compte dans chacun (la somme
+  dépasse le total), et **aucun effectif minimum n'est appliqué** — dans
+  un groupe d'une personne, ces chiffres la désignent. Voir
+  `docsearch-api/README.md`, section « Statistiques par groupe ».
 - **Bascules d'interface** granulaires : assistant IA, pied de page,
   liens Administration/Statistiques, export, aide, collections,
   mots-clés personnalisés, alertes, tri, badge utilisateur, animation

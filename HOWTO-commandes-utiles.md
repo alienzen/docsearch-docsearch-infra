@@ -263,6 +263,31 @@ Signe qu'on est dans ce cas plutôt que face à un vrai bug CSS :
 `getComputedStyle(document.documentElement).getPropertyValue('--un-token-ajouté')`
 renvoie `""` juste après un rebuild.
 
+## Rétro-remplir les groupes des journaux
+
+Les statistiques par groupe reposent sur un champ `groups` écrit au
+moment de chaque recherche/avis/suggestion. Les enregistrements
+antérieurs à cet ajout n'en ont pas et forment un lot « Non renseigné »
+qui écrase les autres. Pour les compléter depuis LDAP, **une fois** :
+
+```bash
+docker exec docsearch-api python3 backfill_groups.py
+```
+
+Cette première commande ne fait que simuler. Relancer avec `--apply`
+pour écrire :
+
+```bash
+docker exec docsearch-api python3 backfill_groups.py --apply
+```
+
+⚠️ Le script applique l'appartenance LDAP **d'aujourd'hui** à des
+événements passés — l'inverse de la capture normale. À réserver à
+l'amorçage des statistiques, jamais en tâche planifiée. Il ne touche
+que les documents dépourvus de `groups` et laisse les suggestions
+anonymes intactes. Détail dans `docsearch-api/README.md`, section
+« Statistiques par groupe d'utilisateurs ».
+
 ## Ajuster la charge
 
 ```bash

@@ -1,5 +1,20 @@
 # HOWTO — Personnaliser les cartes de résultat par source
 
+> ⚠️ **Ne vaut que pour l'interface historique `docsearch-ui`** (port 8080),
+> celle en service aujourd'hui.
+>
+> Le mécanisme décrit ici — `custom-sources.css`, `custom-sources.js`, le
+> registre `sourceCardHooks` et les sélecteurs `.result-card[data-source]` —
+> repose sur `results.js` et sur le CSS maison de `docsearch-ui/public/`.
+> Aucun des deux n'existe dans [docsearch-ui-vue](../docsearch-ui-vue/README.md)
+> (port 8081, en recette), qui rend ses cartes en composants Vue stylés par
+> les classes DSFR : sa carte ne porte ni `data-source`, ni les classes
+> `.result-card*` ciblées ci-dessous.
+>
+> **Il n'existe pour l'instant aucun équivalent côté Vue.** Toute
+> personnalisation faite en suivant ce document sera donc à refaire au
+> moment de la bascule, sous une forme qui reste à définir.
+
 Chaque résultat de recherche porte une clé technique de source (`r.source`,
 ex. `sharepoint_rh` — distincte du libellé affiché, voir `name` dans
 `file_sources_config.py` / `web_sources_config.py` / `sql_sources_config.py`,

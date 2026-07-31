@@ -1,0 +1,5 @@
+# Journaux Kafka. Rétention 24 h (KAFKA_LOG_RETENTION_HOURS) : ce volume
+# ne croît pas indéfiniment, inutile de le dimensionner comme un stockage
+# durable.
+
+[Volume]

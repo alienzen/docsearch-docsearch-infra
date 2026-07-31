@@ -1,0 +1,25 @@
+# ── Worker d'alertes ──────────────────────────────────────────
+# Vérification périodique des recherches sauvegardées marquées "alerte"
+# (docsearch-api/alert_worker.py). Même image que l'API, aucune route
+# HTTP exposée : un tick qui traîne ne doit jamais ralentir /search,
+# d'où un conteneur séparé plutôt qu'une tâche de fond dans uvicorn.
+
+[Unit]
+Description=DocSearch — worker d'alertes
+PartOf=docsearch.target
+After=docsearch-redis.service
+Requires=docsearch-redis.service
+
+[Container]
+ContainerName=docsearch-alert-worker
+Image=localhost/docsearch/api:latest
+Network=docsearch-net.network
+Exec=python alert_worker.py
+EnvironmentFile=/etc/docsearch/docsearch.env
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=docsearch.target

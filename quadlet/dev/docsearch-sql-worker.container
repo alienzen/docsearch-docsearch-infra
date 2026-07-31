@@ -1,0 +1,27 @@
+# ── Worker SQL (connecteur PostgreSQL/MySQL) ──────────────────
+# Interroge les sources SQL enregistrées (./manage.sh add-sql-source) à
+# intervalle régulier et indexe leur résultat. Aucun rapport avec
+# /sources : pas de montage de fichiers ici.
+#
+# Les DSN référencés par connection_ref (CLIENTS_DB_DSN=...) vivent dans
+# docsearch.env, au même titre que le reste de la configuration.
+
+[Unit]
+Description=DocSearch — worker SQL
+PartOf=docsearch.target
+After=docsearch-redis.service
+Requires=docsearch-redis.service
+
+[Container]
+ContainerName=docsearch-sql-worker
+Image=localhost/docsearch/ingestion:latest
+Network=docsearch-net.network
+Exec=python sql_worker.py
+EnvironmentFile=/etc/docsearch/docsearch.env
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=docsearch.target

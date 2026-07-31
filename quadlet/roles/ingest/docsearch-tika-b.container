@@ -1,0 +1,19 @@
+# ── Apache Tika B (machines d'ingestion) ──────────────────────
+# Voir docsearch-tika-a.container.
+
+[Unit]
+Description=DocSearch — Apache Tika B
+PartOf=docsearch.target
+
+[Container]
+ContainerName=docsearch-tika-b
+Image=docker.io/apache/tika:3.3.1.0-full
+Network=docsearch-net.network
+PublishPort=9999:9998
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=docsearch.target

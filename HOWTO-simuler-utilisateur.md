@@ -34,48 +34,37 @@ l'API sans le modifier (voir `docsearch-ui-vue/nginx.conf`).
 
 ## 2. Proxy de test local (naviguer au navigateur, sans extension)
 
-Deux services Nginx dédiés (`docker-compose.dev-user-proxy.yml`) injectent
-`X-User` sur toutes les requêtes — reproduit ce que fait Nginx en prod
-après SSO, mais avec une identité fixe. Évite toute dépendance à une
-extension de navigateur (ModHeader a été retiré du Chrome Web Store et
-d'Edge début juillet 2026 pour collecte de données non consentie — voir
-les alternatives ci-dessous si besoin d'un outil plus flexible).
-
-| Port | Interface visée | Service | Démarrage |
-|------|-----------------|---------|-----------|
-| 8090 | `ui-vue` — interface en service | `dev-user-proxy` | par défaut |
-| 8091 | `ui` — interface historique | `dev-user-proxy-legacy` | profil `legacy`, voir plus bas |
+Un Nginx dédié (unité `docsearch-dev-user-proxy`, port **8090**) injecte
+`X-User` sur toutes les requêtes vers l'interface — reproduit ce que fait
+Nginx en prod après SSO, mais avec une identité fixe. Évite toute
+dépendance à une extension de navigateur (ModHeader a été retiré du
+Chrome Web Store et d'Edge début juillet 2026 pour collecte de données
+non consentie — voir les alternatives ci-dessous si besoin d'un outil
+plus flexible).
 
 Attaquer directement le port 8080 depuis un navigateur renvoie 401 : rien
 n'y injecte `X-User`.
 
-Le proxy de repli est sous profil, comme le service qu'il vise : sans son
-amont démarré, Nginx ne le résout pas et le conteneur redémarrerait en
-boucle.
-
 ```bash
 cd docsearch-infra
 
-# Démarrer (utilisateur par défaut : alice.admin)
-docker compose -f docker-compose.dev-user-proxy.yml up -d
-
-# Changer d'utilisateur simulé
-TEST_X_USER=bob.user docker compose -f docker-compose.dev-user-proxy.yml up -d --force-recreate
+# Démarrer, ou changer d'utilisateur simulé (régénère la conf et redémarre)
+sudo ./manage.sh dev-user alice.admin
+sudo ./manage.sh dev-user bob.user
 
 # Arrêter
-docker compose -f docker-compose.dev-user-proxy.yml down
+sudo systemctl stop docsearch-dev-user-proxy
 ```
 
 Puis naviguer sur `http://192.168.56.101:8090/` (ou
 `http://localhost:8090/` si le navigateur tourne sur la même machine que
-Docker).
+les conteneurs).
 
-```bash
-# Repli : l'ancienne interface et son proxy.
-# Les DEUX profils : "ui" dépend d'"api", qui vit dans "dev".
-docker compose --profile dev --profile legacy up -d ui
-docker compose -f docker-compose.dev-user-proxy.yml --profile legacy up -d
-```
+La substitution de l'identité se fait à l'écriture de
+`/etc/docsearch/nginx/dev-user-proxy.conf`, pas au démarrage du
+conteneur : une unité Quadlet ne peut pas porter proprement un `sh -c`
+avec `sed` et guillemets imbriqués, contrairement à la commande Compose
+qu'elle remplace.
 
 ⚠️ Ce conteneur est **partagé** : changer `TEST_X_USER` change l'identité
 pour toute session déjà ouverte sur le port 8090, pas seulement la vôtre.

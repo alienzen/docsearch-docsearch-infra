@@ -1,0 +1,23 @@
+# ── Worker web (machine frontend) — non démarré par défaut ────
+# Voir docsearch-alert-worker.container pour la raison du [Install]
+# absent. À activer si des sources web sont enregistrées — le crawler
+# lui-même reste à déclarer (aucune unité de crawl dans les rôles de
+# production, voir HOWTO-creer-source-web.md).
+#   sudo systemctl start docsearch-web-worker
+
+[Unit]
+Description=DocSearch — worker web
+PartOf=docsearch.target
+After=docsearch-redis.service
+Requires=docsearch-redis.service
+
+[Container]
+ContainerName=docsearch-web-worker
+Image=localhost/docsearch/ingestion:latest
+Network=docsearch-net.network
+Exec=python web_worker.py
+EnvironmentFile=/etc/docsearch/docsearch.env
+
+[Service]
+Restart=always
+RestartSec=10

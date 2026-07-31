@@ -1,0 +1,18 @@
+# ── Réseau DocSearch ──────────────────────────────────────────
+# Équivalent du réseau "docsearch-net" de l'ancien docker-compose.yml.
+# La résolution DNS entre conteneurs est assurée par aardvark-dns : un
+# conteneur est joignable par son ContainerName ET par ses alias
+# (--network-alias, voir les unités .container).
+#
+# NetworkName= fixe le nom réel du réseau. Sans cette clé, Quadlet le
+# préfixerait ("systemd-docsearch-net") — ce qui n'empêche rien de
+# fonctionner, mais manage.sh doit alors retrouver le nom : il gère les
+# deux cas (voir la fonction net_name).
+
+[Unit]
+Description=Réseau DocSearch (bridge + DNS entre conteneurs)
+
+[Network]
+NetworkName=docsearch-net
+Driver=bridge
+Subnet=172.20.0.0/16

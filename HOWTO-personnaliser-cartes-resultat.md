@@ -20,10 +20,10 @@ commencer.
 | Interface | Port | Statut | Section |
 |---|---|---|---|
 | [`docsearch-ui-vue`](../docsearch-ui-vue/README.md) (Vue + DSFR) | 8080 | **en service** | [§ A](#a--interface-vue-docsearch-ui-vue) |
-| `docsearch-ui` (HTML/JS) | 8082 | repli (`--profile dev --profile legacy`) | [§ B](#b--interface-historique-docsearch-ui) |
+| `docsearch-ui` (HTML/JS) | 8082 | repli (image construite à la main, sans unité systemd) | [§ B](#b--interface-historique-docsearch-ui) |
 
-> La section B ne sert plus qu'au repli : elle disparaîtra avec le service
-> `ui`. Si une personnalisation y existe encore, la transposer via la table
+> La section B ne sert plus qu'au repli : elle disparaîtra avec le dépôt
+> `docsearch-ui`. Si une personnalisation y existe encore, la transposer via la table
 > de correspondance des sélecteurs, en fin de section A.
 
 ## Trouver la clé technique d'une source
@@ -113,7 +113,7 @@ L'attribut `data-source` est le seul élément commun aux deux interfaces.
 Sans reconstruction, sur un conteneur qui tourne déjà :
 
 ```bash
-docker exec -it docsearch-ui-vue vi /usr/share/nginx/html/custom-sources.css
+sudo podman exec -it docsearch-ui-vue vi /usr/share/nginx/html/custom-sources.css
 ```
 
 Puis recharger la page (vider le cache du navigateur si le changement ne se
@@ -122,7 +122,8 @@ voit pas). Pour rendre le réglage permanent, le reporter dans
 
 ```bash
 cd docsearch-infra
-docker compose --profile dev up -d --build ui-vue
+./manage.sh build ui
+sudo systemctl restart docsearch-ui-vue
 ```
 
 ⚠️ Une modification faite uniquement dans le conteneur est **perdue à la
@@ -193,12 +194,15 @@ selon la source, il faudrait une fonction de rendu dédiée par source
 
 ## B.3 Vérifier
 
-Comme pour tout changement dans `docsearch-ui/public/` : reconstruire le
-conteneur `ui` (le `Dockerfile` recopie `public/` dans l'image à la
-construction, pas de bind-mount en dev), puis vider le cache du navigateur
-avant de tester.
+Comme pour tout changement dans `docsearch-ui/public/` : reconstruire
+l'image (le `Dockerfile` recopie `public/` dedans à la construction, pas
+de bind-mount), puis vider le cache du navigateur avant de tester. Cette
+interface historique n'a plus d'unité systemd :
 
 ```bash
-cd docsearch-infra
-docker compose --profile dev --profile legacy up -d --build ui
+cd docsearch-ui
+podman build -t localhost/docsearch/ui:latest .
+sudo podman rm -f docsearch-ui 2>/dev/null
+sudo podman run -d --name docsearch-ui -p 8082:80 \
+  --network docsearch-net localhost/docsearch/ui:latest
 ```

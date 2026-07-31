@@ -1,0 +1,36 @@
+# ── Elastic Open Web Crawler — source cc_decisions ────────────
+# Crawle UN site et respecte lui-même la planification déclarée dans le
+# "schedule:" de sa configuration (commande "schedule", long-running —
+# PAS "crawl", qui ne ferait qu'une passe puis s'arrêterait).
+#
+# output_index doit correspondre au crawl_index déclaré via
+# "./manage.sh add-web-source" pour que le worker web sache où relire le
+# résultat. Un site supplémentaire = une configuration + une unité de ce
+# genre + une source web enregistrée (voir HOWTO-creer-source-web.md).
+#
+# Version épinglée (PAS ":latest") : la production n'a pas d'accès
+# Internet, ses images arrivent par transfert manuel. Un tag flottant
+# rendrait impossible de savoir quelle version transférer, et ferait
+# diverger les machines selon la date du dernier "pull".
+#
+# ⚠️ Sur un réseau isolé, ce crawler ne peut atteindre que des sites
+# intranet — les configurations livrées visent des sites publics.
+
+[Unit]
+Description=DocSearch — crawler web (cc_decisions)
+PartOf=docsearch.target
+
+[Container]
+ContainerName=docsearch-web-crawler-cc-decisions
+Image=docker.elastic.co/integrations/crawler:1.0.0
+Network=docsearch-net.network
+Exec=jruby bin/crawler schedule /config/cc-decisions.yml
+# Les configurations de crawl sont installées depuis docsearch-infra/crawlers
+Volume=/etc/docsearch/crawlers:/config:ro
+
+[Service]
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=docsearch.target

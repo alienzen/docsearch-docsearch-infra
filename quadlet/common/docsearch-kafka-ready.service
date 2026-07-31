@@ -1,0 +1,32 @@
+# ── Disponibilité de Kafka ────────────────────────────────────
+# Remplace le "depends_on: kafka: condition: service_healthy" de Compose,
+# qui n'a pas d'équivalent en Quadlet sur podman < 5.0 (Notify=healthy).
+#
+# Les consommateurs (worker, watcher, indexer-init) se branchent dessus
+# avec After= + Requires= : sans ce verrou, KafkaConsumer lève
+# NoBrokersAvailable au démarrage et systemd redémarre le worker en
+# boucle jusqu'à ce que le broker réponde — fonctionnel, mais illisible
+# dans les journaux.
+#
+# Elasticsearch n'a PAS besoin d'un équivalent : l'attente est déjà faite
+# dans le code (docsearch-ingestion/app/indexer.py:wait_for_es, 300 s),
+# appelé au démarrage de chaque worker.
+#
+# ⚠️ Ce n'est pas une unité Quadlet : elle s'installe dans
+# /etc/systemd/system/, pas dans /etc/containers/systemd/.
+
+[Unit]
+Description=Attente de la disponibilité du broker Kafka
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=/etc/docsearch/docsearch.env
+ExecStart=/usr/local/bin/docsearch-wait-kafka
+# 120 tentatives × 5 s dans le script, plus une marge
+TimeoutStartSec=700
+
+[Install]
+WantedBy=multi-user.target

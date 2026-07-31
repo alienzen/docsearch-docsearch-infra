@@ -1,0 +1,26 @@
+# ── Worker d'alertes (machine frontend) — non démarré par défaut ──
+# Vérifie périodiquement les recherches sauvegardées marquées "alerte".
+#
+# ⚠️ Cette unité comble un écart connu du déploiement 8 machines :
+# alert-worker, sql-worker et web-worker existaient dans la pile
+# mono-hôte mais n'avaient JAMAIS été déclarés dans les fichiers
+# multi-host — ces fonctions ne tournaient donc pas en production.
+# Pas de [Install] : à activer sciemment, quand la fonction est voulue.
+#   sudo systemctl start docsearch-alert-worker
+
+[Unit]
+Description=DocSearch — worker d'alertes
+PartOf=docsearch.target
+After=docsearch-redis.service
+Requires=docsearch-redis.service
+
+[Container]
+ContainerName=docsearch-alert-worker
+Image=localhost/docsearch/api:latest
+Network=docsearch-net.network
+Exec=python alert_worker.py
+EnvironmentFile=/etc/docsearch/docsearch.env
+
+[Service]
+Restart=always
+RestartSec=10

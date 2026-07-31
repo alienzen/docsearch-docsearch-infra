@@ -1,0 +1,22 @@
+# ── Interface web (machine frontend) ──────────────────────────
+# Nginx de production (docsearch-nginx) proxifie vers cette unité :
+# l'amont "ui_backend" de nginx/nginx.conf vise l'hôte "ui-vue", d'où
+# l'alias réseau du même nom.
+
+[Unit]
+Description=DocSearch — interface web
+PartOf=docsearch.target
+After=docsearch-api.service
+
+[Container]
+ContainerName=docsearch-ui-vue
+Image=localhost/docsearch/ui-vue:latest
+Network=docsearch-net.network
+PodmanArgs=--network-alias=ui-vue
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=docsearch.target

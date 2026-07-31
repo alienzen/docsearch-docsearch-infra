@@ -1,0 +1,30 @@
+# ── Apache Tika (serveur 1) ───────────────────────────────────
+# Pas de HealthCmd : les images officielles apache/tika n'embarquent ni
+# curl, ni wget, ni /dev/tcp de façon fiable (TIKA-3333) — un
+# healthcheck basé dessus échoue en permanence même quand Tika répond.
+# Le vrai suivi se fait en HTTP depuis docsearch-api
+# (cluster_status.py:check_tika, panneau /admin/status).
+#
+# Les serveurs 2 à 4 sont des copies de ce fichier (port publié et alias
+# différents). Ils ne sont PAS tirés par docsearch.target : en mono-hôte,
+# un seul Tika suffit et quatre JVM saturent la RAM de la VM. Pour les
+# activer : les démarrer explicitement ET les ajouter à TIKA_SERVERS
+# dans /etc/docsearch/docsearch.env.
+
+[Unit]
+Description=DocSearch — Apache Tika 1
+PartOf=docsearch.target
+
+[Container]
+ContainerName=docsearch-tika1
+Image=docker.io/apache/tika:3.3.1.0-full
+Network=docsearch-net.network
+PublishPort=9998:9998
+PodmanArgs=--network-alias=tika1
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=docsearch.target

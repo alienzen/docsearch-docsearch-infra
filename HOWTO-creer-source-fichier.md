@@ -7,9 +7,9 @@ l'identique dans `docsearch-ingestion/app/` et `docsearch-api/app/`). À
 distinguer des sources SQL (`sql_sources_config.py`) et web
 (`web_sources_config.py`), qui suivent un flux différent.
 
-Contrainte à connaître avant de commencer : un bind-mount Docker est
-fixé à la création du conteneur — impossible d'en monter un nouveau sans
-recréer les conteneurs. C'est pourquoi toutes les sources fichier vivent
+Contrainte à connaître avant de commencer : un montage est fixé à la
+création du conteneur — impossible d'en ajouter un sans modifier l'unité
+et recréer les conteneurs. C'est pourquoi toutes les sources fichier vivent
 sous ce seul point de montage parent : ajouter une source ne nécessite
 qu'un sous-dossier de `SOURCES_ROOT` + un enregistrement dynamique (dans
 Redis, relu à chaud par watcher/worker/producer), jamais de toucher au
@@ -30,9 +30,10 @@ n'a pas d'importance pour le registre — seul le premier scan/passage
 watcher a besoin que le dossier existe réellement sur disque. En
 pratique, autant le créer tout de suite pour ne pas l'oublier.
 
-⚠️ Le dossier doit appartenir à l'UID déclaré dans `DOCKER_UID` (`.env`,
-récupérer le bon UID avec `id -u` sur l'hôte) — sinon les conteneurs ne
-pourront ni le lire ni écrire dedans (verrous d'indexation, etc.).
+⚠️ Le dossier doit appartenir à l'UID déclaré dans `APP_UID` au moment de
+la construction des images (défaut 1000, `id -u` sur l'hôte) — sinon les
+conteneurs ne pourront ni le lire ni écrire dedans (verrous
+d'indexation, etc.).
 
 Les permissions du fichier/dossier sur l'hôte déterminent aussi l'ACL du
 document une fois indexé (`acl_extractor.py`) — rien à configurer côté
@@ -44,7 +45,7 @@ source pour ça, c'est automatique et par fichier.
 
 ```bash
 cd docsearch-infra
-./manage.sh add-file-source finance finance_docs --label Finance
+sudo ./manage.sh add-file-source finance finance_docs --label Finance
 ```
 
 ```text
@@ -99,7 +100,7 @@ démarrage — tout contenu déjà présent dans le dossier au moment de
 l'enregistrement a besoin d'un passage explicite :
 
 ```bash
-./manage.sh init finance
+sudo ./manage.sh init finance
 ```
 
 Équivalent dans l'admin UI : panneau "Indexation", choisir la source
@@ -142,7 +143,7 @@ donne le nombre de documents indexés par source.
 ## Retirer une source
 
 ```bash
-./manage.sh remove-file-source finance
+sudo ./manage.sh remove-file-source finance
 ```
 
 Retire uniquement l'entrée du registre (le watcher arrête d'observer le

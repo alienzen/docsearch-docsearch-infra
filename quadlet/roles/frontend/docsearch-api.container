@@ -1,0 +1,34 @@
+# ── API de recherche (machine frontend) ───────────────────────
+# ES_HOST pointe vers l'IP d'un nœud de données, REDIS_HOST vers "redis"
+# (même réseau podman) — voir /etc/docsearch/docsearch.env.
+
+[Unit]
+Description=DocSearch — API de recherche
+PartOf=docsearch.target
+After=docsearch-redis.service
+Requires=docsearch-redis.service
+
+[Container]
+ContainerName=docsearch-api
+Image=localhost/docsearch/api:latest
+Network=docsearch-net.network
+PublishPort=8000:8000
+PodmanArgs=--network-alias=api
+Exec=uvicorn search_api:app --host 0.0.0.0 --port 8000
+EnvironmentFile=/etc/docsearch/docsearch.env
+# Lecture seule, pour l'aperçu de documents (conversion Office → PDF).
+# Le partage réseau des sources est monté sur l'hôte (CIFS/NFS).
+Volume=/data/docsearch-sources:/sources:ro
+
+HealthCmd=curl -f http://localhost:8000/health
+HealthInterval=20s
+HealthTimeout=5s
+HealthRetries=5
+HealthStartPeriod=90s
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=docsearch.target

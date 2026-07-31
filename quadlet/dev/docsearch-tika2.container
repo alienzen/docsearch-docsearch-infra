@@ -1,0 +1,20 @@
+# ── Apache Tika (serveur 2) — optionnel ───────────────────────
+# Voir docsearch-tika1.container. Pas de [Install] : cette unité n'est
+# jamais tirée automatiquement, elle se démarre à la demande
+#   sudo systemctl start docsearch-tika2
+# et doit alors être ajoutée à TIKA_SERVERS dans docsearch.env.
+
+[Unit]
+Description=DocSearch — Apache Tika 2
+PartOf=docsearch.target
+
+[Container]
+ContainerName=docsearch-tika2
+Image=docker.io/apache/tika:3.3.1.0-full
+Network=docsearch-net.network
+PublishPort=9999:9998
+PodmanArgs=--network-alias=tika2
+
+[Service]
+Restart=always
+RestartSec=10

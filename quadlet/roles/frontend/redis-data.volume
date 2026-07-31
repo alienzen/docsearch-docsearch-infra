@@ -1,0 +1,6 @@
+# Persistance Redis (RDB). Contient TOUTE la configuration dynamique de
+# DocSearch — registres de sources, filtres de chemin, types de fichiers,
+# collections, recherches sauvegardées. À sauvegarder au même titre que
+# les index Elasticsearch.
+
+[Volume]

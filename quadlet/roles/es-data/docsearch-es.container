@@ -1,0 +1,37 @@
+# ── Elasticsearch — nœud de données (es-data-1, es-data-2) ────
+# Unité IDENTIQUE sur les deux machines : tout ce qui les distingue
+# (node.name, tas JVM) vit dans /etc/docsearch/elasticsearch.env.
+# C'est ce qui remplace le "NODE_NAME=es01 docker compose up" de
+# l'ancienne procédure — plus rien à passer en ligne de commande, donc
+# plus de risque de démarrer deux nœuds avec le même nom.
+#
+# Network=host : le cluster communique en 9300 entre machines et expose
+# 9200 aux clients, sans NAT ni réseau podman.
+
+[Unit]
+Description=DocSearch — Elasticsearch (nœud de données)
+PartOf=docsearch.target
+
+[Container]
+ContainerName=docsearch-es
+Image=docker.elastic.co/elasticsearch/elasticsearch:9.4.3
+Network=host
+# Le SSD de données est monté sur l'hôte (voir le guide d'installation) ;
+# il doit appartenir à l'UID 1000, celui de l'utilisateur du conteneur ES.
+Volume=/data/es:/usr/share/elasticsearch/data
+EnvironmentFile=/etc/docsearch/elasticsearch.env
+PodmanArgs=--ulimit=memlock=-1:-1 --ulimit=nofile=65536:65536
+
+HealthCmd=curl -sf --max-time 15 http://localhost:9200/_cluster/health?wait_for_status=yellow
+HealthInterval=20s
+HealthTimeout=20s
+HealthRetries=5
+HealthStartPeriod=90s
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=docsearch.target

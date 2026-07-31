@@ -1,0 +1,22 @@
+# ── Kibana ────────────────────────────────────────────────────
+# Hébergé sur es-voting, la machine la moins chargée du cluster.
+# ELASTICSEARCH_HOSTS pointe vers un nœud de données réel (voir
+# /etc/docsearch/kibana.env).
+
+[Unit]
+Description=DocSearch — Kibana
+PartOf=docsearch.target
+After=docsearch-es03-voting.service
+
+[Container]
+ContainerName=docsearch-kibana
+Image=docker.elastic.co/kibana/kibana:9.4.3
+Network=host
+EnvironmentFile=/etc/docsearch/kibana.env
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=docsearch.target

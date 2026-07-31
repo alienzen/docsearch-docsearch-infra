@@ -19,13 +19,14 @@ interchangeables, au même statut (aucune dépréciée) :
 ### Méthode 1 — variable d'environnement (historique)
 
 ```bash
-# docsearch-infra/.env
+# /etc/docsearch/docsearch.env
 CLIENTS_DB_DSN=postgresql+psycopg2://user:motdepasse@host:5432/dbname
 FACTURES_DB_DSN=mysql+pymysql://user:motdepasse@host:3306/dbname
 ```
 
-Nécessite `docker compose up`/`restart` pour prendre effet (nouvelle
-variable d'environnement = nouveau conteneur).
+Nécessite `sudo systemctl restart docsearch-sql-worker` pour prendre
+effet (nouvelle variable dans `/etc/docsearch/docsearch.env` = conteneur
+à recréer).
 
 ### Méthode 2 — DSN chiffré via le panneau admin (dynamique, sans redémarrage)
 
@@ -39,11 +40,13 @@ Ou dans l'admin UI : panneau "Sources SQL" > section "DSN chiffrés".
 Le DSN est chiffré (Fernet) avant stockage dans Redis — jamais réexposé
 en clair après coup (seul un indice schéma+hôte reste consultable via
 `GET /admin/sql-dsns`). Nécessite `DSN_ENCRYPTION_KEY` (identique côté
-`docsearch-api` ET `docsearch-ingestion`, voir `.env.example`) :
+`docsearch-api` ET `docsearch-ingestion` — une seule clé dans
+`/etc/docsearch/docsearch.env`, que toutes les unités lisent) :
 
 ```bash
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-# → coller le résultat dans DSN_ENCRYPTION_KEY= (.env), puis redémarrer une fois
+# → coller dans DSN_ENCRYPTION_KEY= (/etc/docsearch/docsearch.env), puis :
+#   sudo systemctl restart docsearch.target
 ```
 
 Pas de raccourci `manage.sh` pour cette méthode — uniquement API/admin UI.
@@ -94,7 +97,7 @@ Exemple de mapping :
 
 ```bash
 cd docsearch-infra
-./manage.sh add-sql-source clients postgresql CLIENTS_DB_DSN \
+sudo ./manage.sh add-sql-source clients postgresql CLIENTS_DB_DSN \
   "SELECT id, nom, email, actif FROM clients WHERE actif = true" id clients_sql \
   '[{"column":"id","es_field":"id","es_type":"keyword"},
     {"column":"nom","es_field":"nom","es_type":"text","analyzer":"french"},
@@ -165,7 +168,7 @@ Pas besoin d'attendre `poll_interval_seconds` pour tester une source
 qui vient d'être ajoutée :
 
 ```bash
-./manage.sh run-sql-source clients
+sudo ./manage.sh run-sql-source clients
 ```
 
 Chaque passage (manuel ou automatique) fait **deux choses** en une
@@ -219,7 +222,7 @@ curl -H "X-User: alice.admin" http://localhost:8000/admin/all-sources | jq
 ## Retirer une source SQL
 
 ```bash
-./manage.sh remove-sql-source clients
+sudo ./manage.sh remove-sql-source clients
 ```
 
 Retire uniquement l'entrée du registre (`sql-worker` arrête de

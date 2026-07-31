@@ -1,7 +1,9 @@
 # docsearch-infra
 
-Orchestration Docker Compose de **DocSearch** — c'est le dépôt à cloner en
-premier et celui qui lance l'ensemble du système.
+Orchestration de **DocSearch** sous **podman + systemd (Quadlet)** —
+c'est le dépôt à cloner en premier et celui qui lance l'ensemble du
+système. Les unités et leur installation sont décrites dans
+[quadlet/README.md](quadlet/README.md).
 
 Pour la liste complète des fonctionnalités (recherche, ingestion,
 administration, sécurité), voir [FEATURES.md](FEATURES.md).
@@ -20,9 +22,9 @@ DocSearch est découpé en 6 dépôts indépendants :
 | [docsearch-dataset-generator](../docsearch-dataset-generator) | Génération de jeux de test | Utilisé ponctuellement, hors production |
 
 **Convention de clonage** — tous les dépôts doivent être clonés côte à côte
-dans un même dossier parent, car `docker-compose.yml` référence les autres
-projets par chemin relatif (`../docsearch-ingestion`, `../docsearch-api`,
-`../docsearch-ui`) :
+dans un même dossier parent, car `./manage.sh build` construit les images
+depuis des chemins relatifs (`../docsearch-ingestion`, `../docsearch-api`,
+`../docsearch-ui-vue`) :
 
 ```
 docsearch/
@@ -42,19 +44,21 @@ git clone <url>/docsearch-ui.git
 git clone <url>/docsearch-docs.git
 
 cd docsearch-infra
-cp .env.example .env
-nano .env                    # adapter DOCS_PATH, DOCKER_UID, LDAP...
-chmod +x manage.sh
+chmod +x manage.sh quadlet/install-units.sh
 
-./manage.sh start            # démarre tout (mode dev)
-./manage.sh init             # publie les fichiers sur Kafka (voir note ci-dessous)
+./manage.sh build all                    # construit les images (machine CONNECTÉE)
+sudo ./quadlet/install-units.sh dev      # installe les unités systemd
+sudo nano /etc/docsearch/docsearch.env   # adapter SOURCES_HOST_PATH, LDAP...
+
+sudo ./manage.sh start                   # démarre la pile
+sudo ./manage.sh init                    # publie les fichiers sur Kafka (voir note ci-dessous)
 ```
 
 > ⚠️ **`init` ne fait qu'écrire sur Kafka** — l'indexation réelle est
-> faite en arrière-plan par les réplicas du service `worker`, qui
-> doivent déjà tourner (démarrés par `start`/`start-prod`). Si `init`
-> est lancé alors qu'aucun worker n'est actif (stack jamais démarré,
-> ou arrêté depuis un `stop`/`reset`), l'index est créé mais reste
+> faite en arrière-plan par les unités `docsearch-worker-*`, qui doivent
+> déjà tourner (démarrées par `start`). Si `init` est lancé alors
+> qu'aucun worker n'est actif (pile jamais démarrée, ou arrêtée depuis
+> un `stop`/`reset`), l'index est créé mais reste
 > vide, sans erreur visible — `manage.sh` vérifie maintenant ce cas
 > et refuse de continuer si Kafka ou les workers ne sont pas détectés.
 > Suivre la progression avec `./manage.sh logs worker` et
@@ -86,64 +90,80 @@ chmod +x manage.sh
 ## Commandes
 
 ```bash
-./manage.sh start           # Mode dev : ES single-node, 1 worker
-./manage.sh start-prod      # Mode prod : cluster ES 3 nœuds + Nginx
-./manage.sh stop
+sudo ./manage.sh start      # Démarre docsearch.target
+sudo ./manage.sh stop
 ./manage.sh status
-./manage.sh logs <service>  # ex: api, worker, watcher, es01-dev
-./manage.sh init            # Indexation initiale (dossier complet)
-./manage.sh init finance    # Réindexer uniquement /documents/finance
-./manage.sh scale-workers N
+./manage.sh logs <service>  # ex: api, worker, watcher, es01
+sudo ./manage.sh init            # Indexation initiale (dossier complet)
+sudo ./manage.sh init finance    # Réindexer uniquement la source "finance"
+sudo ./manage.sh scale-workers N
+./manage.sh build [all|api|ingestion|ui]
 ./manage.sh backup
-./manage.sh reset           # ⚠️ supprime toutes les données
+sudo ./manage.sh reset      # ⚠️ supprime toutes les données
 ```
 
-## Rebuild après modification d'un sous-projet
+Ce qu'une machine démarre dépend des unités qui y sont installées
+(`quadlet/install-units.sh <rôle>`) : il n'y a plus de `start-prod` ni de
+profils.
 
-⚠️ Reconstruire **tous** les services qui partagent le même contexte de
-build (voir `context:` dans `docker-compose.yml`) — en oublier un laisse
-un conteneur tourner avec du code périmé, silencieusement (c'est ce qui
-s'est produit avec `watcher` pour l'OCR avant que ce README ne soit à
-jour : image jamais reconstruite après l'ajout de la fonctionnalité).
+**Qui a besoin de `sudo`** — les unités, le réseau, les images et
+`/etc/docsearch/*.env` appartiennent tous à root (podman rootful) :
+
+| Sans sudo | Avec sudo |
+|---|---|
+| `status`, `logs`, `build`, `backup`, `get-config`, `get-filetypes`, `list-*` | `start`, `stop`, `restart`, `reset`, `init`, `scale-workers`, `dev-user`, et toutes les commandes qui modifient une source ou la configuration (`add-*`, `remove-*`, `run-*`, `set-*`, `*-path`) |
+
+Les commandes d'administration lancent un conteneur jetable sur le
+réseau de la pile : sans `sudo`, `manage.sh` refuse avec un message
+explicite plutôt que d'échouer sur un « réseau introuvable ».
+
+## Reconstruire après modification d'un sous-projet
+
+Une image par dépôt, et non plus une par service : reconstruire
+`ingestion` met à jour d'un coup les workers, le watcher, les workers
+SQL/web et les commandes d'administration. Il reste à redémarrer les
+unités qui l'utilisent.
 
 ```bash
 # Après une modification dans docsearch-ingestion :
-# (context: ../docsearch-ingestion — worker, watcher, sql-worker,
-# web-worker et indexer-init en dépendent TOUS, pas seulement
-# worker/watcher)
-docker compose build worker watcher sql-worker web-worker indexer-init
-docker compose up -d worker watcher sql-worker web-worker
+./manage.sh build ingestion
+sudo systemctl restart 'docsearch-worker-*' docsearch-watcher docsearch-sql-worker docsearch-web-worker
 
 # Après une modification dans docsearch-api :
-# (context: ../docsearch-api — api ET alert-worker en dépendent)
-docker compose build api alert-worker
-docker compose up -d api alert-worker
+# (docsearch-api ET alert-worker partagent l'image)
+./manage.sh build api
+sudo systemctl restart docsearch-api docsearch-alert-worker
 
-# Après une modification dans docsearch-ui :
-docker compose build ui
-docker compose up -d ui
+# Après une modification dans docsearch-ui-vue :
+./manage.sh build ui
+sudo systemctl restart docsearch-ui-vue
 ```
+
+⚠️ Le code est copié DANS l'image : modifier un fichier sur disque n'a
+aucun effet tant que l'image n'est pas reconstruite **et** l'unité
+redémarrée.
 
 ## Chemin des documents (hôte vs conteneur)
 
-Deux variables distinctes, à ne pas confondre :
+Trois valeurs distinctes, à ne pas confondre :
 
-| Variable | Rôle |
-|---|---|
-| `DOCS_PATH` | Dossier réel sur l'**hôte** contenant les documents |
-| `DOCS_FOLDER` | Chemin correspondant **à l'intérieur des conteneurs** |
+| Valeur | Où elle est écrite | Rôle |
+|---|---|---|
+| `Volume=/chemin:/sources:ro` | dans chaque unité `.container` | montage réel du dossier de l'**hôte** |
+| `SOURCES_HOST_PATH` | `/etc/docsearch/docsearch.env` | le même chemin hôte, pour les commandes ponctuelles de `manage.sh` |
+| `SOURCES_MOUNT` | `/etc/docsearch/docsearch.env` | chemin correspondant **dans les conteneurs** (`/sources`) |
 
-`DOCS_FOLDER` pilote à la fois le point de montage du volume Docker
-(`documents:${DOCS_FOLDER:-/documents}:ro`) et la variable applicative
-lue par le code Python (`os.getenv("DOCS_FOLDER", ...)`) — **les deux
-proviennent de la même valeur**, elles ne peuvent donc jamais diverger.
-C'est volontaire : changer l'un sans l'autre reproduirait exactement le
-bug déjà rencontré par le passé (le code cherchait dans un chemin
-différent de celui réellement monté, index vide sans erreur visible).
+⚠️ **Ces valeurs peuvent diverger, et c'est le principal piège de
+l'orchestration par unités** : Quadlet ne substitue aucune variable, le
+chemin hôte est donc écrit en dur dans les unités et dupliqué dans
+`SOURCES_HOST_PATH`. À l'époque de Compose, une seule variable pilotait
+les deux et la divergence était impossible.
 
-En pratique, seul `DOCS_PATH` a besoin d'être changé dans l'immense
-majorité des cas — `DOCS_FOLDER` ne sert que si `/documents` entre en
-conflit avec un autre point de montage à l'intérieur des conteneurs.
+Conséquence : pour changer de dossier de sources, modifier **les deux**
+(unités via un drop-in, voir [quadlet/README.md](quadlet/README.md), et
+`SOURCES_HOST_PATH`). Les oublier à moitié reproduit un bug déjà
+rencontré par le passé : le code cherche dans un chemin différent de
+celui réellement monté, index vide sans erreur visible.
 
 ## Panneau d'administration
 
@@ -151,15 +171,15 @@ Accessible sur `/admin.html`, réservé aux membres du groupe LDAP/AD
 défini par `ADMIN_GROUP` (nécessite `LDAP_ENABLED=true`) :
 
 ```bash
-# .env
+# /etc/docsearch/docsearch.env
 LDAP_ENABLED=true
 ADMIN_GROUP=docsearch-admins
 ```
 
 Permet de consulter l'état des composants, ajuster la configuration
 (types de fichiers, paramètres opérationnels, filtres de chemin) et
-déclencher un scan ou une purge — sans jamais toucher à Docker. Voir
-le README de `docsearch-api` pour le détail des routes `/admin/*`.
+déclencher un scan ou une purge — sans jamais toucher aux conteneurs.
+Voir le README de `docsearch-api` pour le détail des routes `/admin/*`.
 
 Sans SSO configuré (dev/test), voir
 [HOWTO-simuler-utilisateur.md](HOWTO-simuler-utilisateur.md) pour
@@ -174,22 +194,39 @@ blanche), voir
 services — `docsearch-ingestion` (qui écrit) et `docsearch-api` (qui
 lit) doivent pointer vers le même index, sinon l'API renverra
 silencieusement zéro résultat alors que l'indexation semble fonctionner.
-Ce fichier `docker-compose.yml` propage `ES_INDEX` à tous les services
-via `x-app-env` — il suffit de le définir une seule fois dans `.env`.
+Toutes les unités lisent le même `EnvironmentFile` — il suffit donc de
+définir `ES_INDEX` une seule fois par machine.
 
 ```bash
-# .env
+# /etc/docsearch/docsearch.env
 ES_INDEX=documents_prod
 ```
 
 ⚠️ Changer cette valeur sur un environnement déjà en production ne
 migre pas les données : le nouvel index démarre vide. Prévoir une
-réindexation complète (`./manage.sh init`) après tout changement.
+réindexation complète (`sudo ./manage.sh init`) après tout changement.
+
+## Déploiement en production (réseau isolé)
+
+La production n'a **aucun accès Internet**. L'application n'en a pas
+besoin pour fonctionner, mais l'installation et les mises à jour, si :
+les images tierces, les `pip install` / `npm ci` des Dockerfiles et les
+`git pull` supposent tous un réseau. La procédure (machine de
+préparation, `podman save`/`podman load`, paquets podman à transférer)
+est décrite dans
+[HOWTO-deploiement-hors-ligne.md](HOWTO-deploiement-hors-ligne.md).
+
+Aucune construction n'a lieu au démarrage : `systemctl start` échoue
+immédiatement si une image manque, sans jamais tenter d'atteindre le
+réseau. Il n'y a donc rien à désactiver sur une machine isolée — seule
+`./manage.sh build` demande un accès Internet, et ne se lance que sur la
+machine de préparation.
 
 ## Stack technique
 
 Elasticsearch 9.4.3 · Apache Tika 3.3.1.0 · Kafka 8.3 (KRaft, sans
-Zookeeper) · Redis 7.2 · Nginx 1.27 · Python 3.12.
+Zookeeper) · Redis 7.2 · Nginx 1.27 · Python 3.12 · Elastic Open Web
+Crawler 1.0.0.
 
 Voir `guide_install_virtualbox.docx` dans `docsearch-docs` pour une
 installation pas à pas sur VM VirtualBox.

@@ -1,0 +1,22 @@
+# ── Cible DocSearch (mono-hôte) ───────────────────────────────
+# Regroupe toutes les unités de la pile pour les piloter d'un bloc :
+#
+#   sudo systemctl start   docsearch.target     (= ancien manage.sh start)
+#   sudo systemctl stop    docsearch.target
+#   sudo systemctl enable  docsearch.target     (démarrage au boot)
+#   systemctl list-units 'docsearch-*'
+#
+# Chaque unité de la pile déclare "PartOf=docsearch.target" (pour que
+# stop/restart se propagent) et "WantedBy=docsearch.target" (pour être
+# tirée au démarrage de la cible).
+#
+# ⚠️ Ce n'est pas une unité Quadlet : elle s'installe dans
+# /etc/systemd/system/, pas dans /etc/containers/systemd/.
+
+[Unit]
+Description=DocSearch — pile complète
+After=network-online.target
+Wants=network-online.target
+
+[Install]
+WantedBy=multi-user.target

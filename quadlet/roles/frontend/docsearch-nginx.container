@@ -1,0 +1,28 @@
+# ── Nginx (reverse proxy : interface + API + SSL) ─────────────
+# Porte d'entrée unique de la production : contrôle d'accès page par
+# page (auth_request), terminaison TLS, répartition vers l'API et
+# l'interface.
+#
+# Les ports 80/443 imposent podman en mode ROOTFUL (un podman rootless
+# ne peut pas se lier sous 1024 sans réglage supplémentaire).
+
+[Unit]
+Description=DocSearch — Nginx (reverse proxy)
+PartOf=docsearch.target
+After=docsearch-api.service docsearch-ui-vue.service
+
+[Container]
+ContainerName=docsearch-nginx
+Image=docker.io/library/nginx:1.27-alpine
+Network=docsearch-net.network
+PublishPort=80:80
+PublishPort=443:443
+Volume=/etc/docsearch/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+Volume=/etc/docsearch/nginx/certs:/etc/nginx/certs:ro
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=docsearch.target

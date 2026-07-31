@@ -1,28 +1,53 @@
 #!/usr/bin/env bash
 # ─────────────────────────────────────────────────────────────
-#  manage.sh — Gestion du stack DocSearch
+#  manage.sh — Gestion du stack DocSearch (podman + systemd)
 #  Usage : ./manage.sh [start|stop|restart|status|logs|init|reset]
 #
-#  Deux modes via profils Docker Compose :
-#    ./manage.sh start       → profil "dev"  (ES single-node, 1 GB)
-#    ./manage.sh start-prod  → profil "production" (cluster 3 nœuds)
+#  Les services sont des unités systemd générées par Quadlet (voir
+#  quadlet/) : ce script ne fait que les piloter et exécuter les tâches
+#  ponctuelles d'administration dans un conteneur jetable.
+#
+#  Installation des unités — une fois par machine, AVANT tout démarrage :
+#    sudo ./quadlet/install-units.sh dev        (poste de développement)
+#    sudo ./quadlet/install-units.sh <rôle>     (serveurs de production)
+#
+#  Il n'y a plus de "start-prod" : le mode d'une machine est déterminé
+#  par les unités qui y sont installées, pas par une option au démarrage.
 # ─────────────────────────────────────────────────────────────
 set -euo pipefail
 
-COMPOSE="docker compose"
+PODMAN="podman"
+TARGET="docsearch.target"
+
+# Configuration de la machine — remplace l'ancien .env de Compose.
+CONFIG_DIR="${DOCSEARCH_CONFIG_DIR:-/etc/docsearch}"
+ENV_FILE="$CONFIG_DIR/docsearch.env"
+
+# Images construites localement (voir ./manage.sh build)
+IMAGE_INGESTION="localhost/docsearch/ingestion:latest"
+IMAGE_API="localhost/docsearch/api:latest"
+IMAGE_UI="localhost/docsearch/ui-vue:latest"
 GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 
-# Charge .env dans le shell de manage.sh lui-même (docker compose le lit
-# déjà automatiquement pour les substitutions dans docker-compose.yml,
-# mais les commandes curl directes ci-dessous — status, get-config...
-# tournent sur l'hôte et ont besoin de ces variables explicitement).
-if [ -f .env ]; then
-    # Ne JAMAIS faire "source .env" : bash exécuterait le fichier comme
-    # un script, et toute valeur contenant un espace non protégé par
-    # des guillemets (ex: ES_JAVA_OPTS=-Xms1g -Xmx1g, courant et valide
-    # pour Docker Compose) casse tout — bash lit "-Xmx1g" comme une
-    # commande à exécuter après l'assignation, d'où l'erreur
-    # ".env: ligne N: -Xmx1g: commande introuvable".
+# Charge la configuration de la machine dans le shell de manage.sh :
+# les conteneurs la reçoivent par --env-file, mais les commandes curl
+# ci-dessous (status, get-config...) tournent sur l'hôte et ont besoin
+# de ces variables explicitement.
+#
+# Test de LISIBILITÉ, pas d'existence : ce fichier porte le mot de passe
+# LDAP et les DSN SQL, il est donc en 0600 root. Un utilisateur ordinaire
+# ne peut pas le lire, et le script doit continuer avec les valeurs par
+# défaut plutôt que d'échouer sur une redirection refusée — "status" et
+# "logs" restent utilisables sans sudo.
+if [ -f "$ENV_FILE" ] && [ ! -r "$ENV_FILE" ]; then
+    echo -e "\033[1;33m[WARN]\033[0m $ENV_FILE illisible (0600 root) — valeurs par défaut utilisées. Passer par sudo pour la configuration réelle." >&2
+fi
+if [ -r "$ENV_FILE" ]; then
+    # Ne JAMAIS faire "source" : bash exécuterait le fichier comme un
+    # script, et toute valeur contenant un espace non protégé par des
+    # guillemets (ex: ES_JAVA_OPTS=-Xms1g -Xmx1g) casse tout — bash lit
+    # "-Xmx1g" comme une commande à exécuter après l'assignation, d'où
+    # l'erreur "-Xmx1g : commande introuvable".
     # On analyse donc le fichier ligne par ligne sans jamais l'exécuter.
     while IFS='=' read -r key value; do
         # Ignorer commentaires et lignes vides
@@ -35,7 +60,7 @@ if [ -f .env ]; then
         value="${value%\"}"; value="${value#\"}"
         value="${value%\'}"; value="${value#\'}"
         export "$key=$value"
-    done < .env
+    done < "$ENV_FILE"
 fi
 ES_INDEX="${ES_INDEX:-documents}"
 ES_SEARCH_ALIAS="${ES_SEARCH_ALIAS:-docsearch-all}"
@@ -45,17 +70,75 @@ warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err()  { echo -e "${RED}[ERREUR]${NC} $*"; exit 1; }
 
 check_deps() {
-    command -v docker >/dev/null 2>&1 || err "Docker non installé"
-    command -v openssl >/dev/null 2>&1 || warn "openssl absent — génération SSL ignorée"
+    command -v podman    >/dev/null 2>&1 || err "podman n'est pas installé."
+    command -v systemctl >/dev/null 2>&1 || err "systemd est requis (unités Quadlet)."
+    [ -f "$ENV_FILE" ] || err "$ENV_FILE introuvable — installer d'abord les unités :
+  sudo ./quadlet/install-units.sh dev        (poste de développement)
+  sudo ./quadlet/install-units.sh <rôle>     (serveurs de production)"
+}
+
+# systemctl start/stop/restart exige les droits root (podman rootful).
+require_root() {
+    [ "$(id -u)" -eq 0 ] || err "Cette commande doit être lancée avec sudo."
+}
+
+# Nom réel du réseau podman. Quadlet le préfixe ("systemd-docsearch-net")
+# quand la clé NetworkName= n'est pas prise en compte — ce qui dépend de
+# la version de podman. On le retrouve au lieu de le supposer.
+net_name() {
+    $PODMAN network ls --format '{{.Name}}' 2>/dev/null \
+      | grep -E '^(systemd-)?docsearch-net$' | head -1
+}
+
+# Exécute une tâche ponctuelle d'administration dans un conteneur
+# jetable, sur le réseau et avec la configuration de la pile.
+#
+# Remplace les 22 "docker compose --profile init run --rm indexer-init"
+# de la version Compose : même image que les workers, mêmes variables,
+# mêmes sources montées en lecture seule.
+#
+# Les options "-e VAR" éventuelles sont consommées en tête d'appel et
+# transmises à podman : elles font passer au conteneur une variable de
+# l'environnement de ce script (paramètres d'add-sql-source /
+# add-web-source), qui ne vit pas dans le fichier de configuration.
+init_run() {
+    local net
+    local passthrough=()
+    while [ "${1:-}" = "-e" ]; do
+        passthrough+=("-e" "$2")
+        shift 2
+    done
+    # Le réseau, les images et le fichier de configuration appartiennent
+    # tous à root (podman rootful) : sans sudo, le conteneur jetable ne
+    # trouverait ni le réseau ni les images. Autant le dire clairement
+    # plutôt que de laisser échouer sur "réseau introuvable".
+    [ "$(id -u)" -eq 0 ] || err "Cette commande doit être lancée avec sudo (réseau et images appartiennent à root)."
+    net="$(net_name)"
+    [ -n "$net" ] || err "Réseau podman introuvable — la pile a-t-elle déjà démarré ? (sudo ./manage.sh start)"
+    $PODMAN image exists "$IMAGE_INGESTION" \
+      || err "Image $IMAGE_INGESTION absente — la construire (./manage.sh build) ou la charger (podman load), voir HOWTO-deploiement-hors-ligne.md."
+    $PODMAN run --rm \
+        --network "$net" \
+        --env-file "$ENV_FILE" \
+        ${passthrough[@]+"${passthrough[@]}"} \
+        -v "${SOURCES_HOST_PATH:-/data/docsearch-sources}:${SOURCES_MOUNT:-/sources}:ro" \
+        "$IMAGE_INGESTION" "$@"
+}
+
+# Nombre d'unités systemd actives correspondant à un motif
+units_running() {
+    systemctl list-units --state=running --no-legend "$1" 2>/dev/null | wc -l | tr -d ' '
 }
 
 generate_ssl() {
-    if [ ! -f nginx/certs/cert.pem ]; then
+    local certs="$CONFIG_DIR/nginx/certs"
+    if [ ! -f "$certs/cert.pem" ]; then
+        command -v openssl >/dev/null 2>&1 || { warn "openssl absent — génération SSL ignorée"; return 0; }
         log "Génération du certificat SSL auto-signé..."
-        mkdir -p nginx/certs
+        mkdir -p "$certs"
         openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-            -keyout nginx/certs/key.pem \
-            -out    nginx/certs/cert.pem \
+            -keyout "$certs/key.pem" \
+            -out    "$certs/cert.pem" \
             -subj   "/CN=docsearch.local" 2>/dev/null
     fi
 }
@@ -65,7 +148,9 @@ set_sysctl() {
     if [ "$CURRENT" -lt 262144 ]; then
         log "Réglage vm.max_map_count=262144 (requis par Elasticsearch)..."
         sudo sysctl -w vm.max_map_count=262144
-        echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.conf > /dev/null
+        # Fichier dédié plutôt qu'un ajout en fin de /etc/sysctl.conf :
+        # l'ancienne version y ajoutait une ligne à CHAQUE démarrage.
+        echo "vm.max_map_count=262144" | sudo tee /etc/sysctl.d/99-docsearch.conf > /dev/null
     fi
 }
 
@@ -73,37 +158,35 @@ case "${1:-help}" in
 
   start)
     check_deps
+    require_root
     set_sysctl
-    log "Démarrage en mode DÉVELOPPEMENT (ES single-node)..."
-    $COMPOSE --profile dev up -d --build
-    log "Stack démarré :"
-    echo "  🔍 Recherche : http://localhost:8000"
-    echo "  📊 Kibana    : http://localhost:5601"
+    # Ne fait rien si le certificat existe déjà, et ne concerne que les
+    # machines qui portent le reverse proxy.
+    [ -f "$CONFIG_DIR/nginx/nginx.conf" ] && generate_ssl
+    log "Démarrage des unités DocSearch ($TARGET)..."
+    systemctl start "$TARGET"
+    log "Pile démarrée :"
+    echo "  🔍 Interface : http://localhost:8080"
     echo "  🔌 API       : http://localhost:8000/docs"
-    ;;
-
-  start-prod)
-    check_deps
-    set_sysctl
-    generate_ssl
-    log "Démarrage en mode PRODUCTION (cluster ES 3 nœuds)..."
-    $COMPOSE --profile production up -d --build
-    log "Stack production démarré."
+    echo "  📊 Kibana    : sudo systemctl start docsearch-kibana → http://localhost:5601"
+    echo "  📋 État      : ./manage.sh status"
     ;;
 
   stop)
-    log "Arrêt du stack..."
-    $COMPOSE --profile dev --profile production down
+    require_root
+    log "Arrêt des unités DocSearch..."
+    systemctl stop "$TARGET"
     ;;
 
   restart)
-    $COMPOSE --profile dev --profile production down
-    $COMPOSE --profile dev up -d
+    require_root
+    log "Redémarrage des unités DocSearch..."
+    systemctl restart "$TARGET"
     ;;
 
   status)
     log "État des services :"
-    $COMPOSE --profile dev --profile production ps
+    systemctl list-units 'docsearch-*' --all --no-pager || true
     echo ""
     log "Santé Elasticsearch :"
     curl -sf http://localhost:9200/_cluster/health?pretty 2>/dev/null \
@@ -117,11 +200,17 @@ case "${1:-help}" in
     ;;
 
   logs)
+    # Les journaux des conteneurs vont dans journald : "logs worker"
+    # suit toutes les unités worker d'un coup (motif docsearch-worker-*),
+    # ce que "docker compose logs worker" faisait pour les réplicas.
     SERVICE="${2:-}"
     if [ -n "$SERVICE" ]; then
-        $COMPOSE --profile dev --profile production logs -f "$SERVICE"
+        case "$SERVICE" in
+            worker) journalctl -f -u 'docsearch-worker-*' ;;
+            *)      journalctl -f -u "docsearch-${SERVICE#docsearch-}" ;;
+        esac
     else
-        $COMPOSE --profile dev logs -f
+        journalctl -f -u 'docsearch-*'
     fi
     ;;
 
@@ -141,26 +230,116 @@ case "${1:-help}" in
     # S'ils ne tournent pas déjà (stack jamais démarré, ou arrêté
     # depuis), le topic se remplit mais rien ne le consomme : l'index
     # est créé mais reste vide, sans aucune erreur visible.
-    WORKER_COUNT=$($COMPOSE ps --status running --format '{{.Name}}' worker 2>/dev/null | wc -l | tr -d ' ')
-    KAFKA_RUNNING=$($COMPOSE ps --status running --format '{{.Name}}' kafka 2>/dev/null | wc -l | tr -d ' ')
+    WORKER_COUNT=$(units_running 'docsearch-worker-*.service')
+    # Kafka peut tourner sur CETTE machine (mono-hôte) ou sur une autre
+    # (déploiement 8 machines) : dans le second cas, c'est le verrou de
+    # disponibilité qui atteste que le broker répond.
+    KAFKA_OK=0
+    systemctl is-active --quiet docsearch-kafka.service       2>/dev/null && KAFKA_OK=1
+    systemctl is-active --quiet docsearch-kafka-ready.service 2>/dev/null && KAFKA_OK=1
 
-    if [ "$KAFKA_RUNNING" -eq 0 ] || [ "$WORKER_COUNT" -eq 0 ]; then
+    if [ "$KAFKA_OK" -eq 0 ] || [ "$WORKER_COUNT" -eq 0 ]; then
         err "Aucun worker (ou Kafka) en cours d'exécution — les messages publiés ne seraient consommés par personne.
-  Lancez d'abord le stack : sudo ./manage.sh start   (ou start-prod)
-  puis relancez              : sudo ./manage.sh init"
+  Lancez d'abord la pile : sudo ./manage.sh start
+  puis relancez          : ./manage.sh init"
     fi
 
     log "Publication des fichiers sur Kafka (source '${SOURCE}'${SOUS_DOSSIER:+, sous-dossier $SOUS_DOSSIER})..."
-    $COMPOSE --profile init run --build --rm indexer-init python producer.py "$SOURCE" "$SOUS_DOSSIER"
+    init_run python producer.py "$SOURCE" "$SOUS_DOSSIER"
     log "Publication terminée. L'indexation se fait maintenant en arrière-plan par les $WORKER_COUNT worker(s) actifs."
     log "Suivre l'avancement : ./manage.sh logs worker"
     log "Vérifier le nombre de documents indexés : ./manage.sh list-file-sources"
     ;;
 
   scale-workers)
-    N="${2:-8}"
-    log "Mise à l'échelle des workers : $N instances..."
-    $COMPOSE --profile dev up -d --scale worker="$N"
+    # Une unité systemd par worker : la mise à l'échelle consiste à
+    # régénérer les unités depuis le modèle (quadlet/*/…worker.container.in)
+    # puis à les démarrer. install-units.sh sait faire les deux sens,
+    # y compris retirer les unités excédentaires.
+    require_root
+    N="${2:-4}"
+    ARGS_FILE="$CONFIG_DIR/install-args"
+    [ -f "$ARGS_FILE" ] || err "$ARGS_FILE introuvable — réinstaller les unités :
+  sudo ./quadlet/install-units.sh <rôle>"
+
+    # Arrêter d'abord les workers qui vont disparaître : leurs unités
+    # sont sur le point d'être supprimées, systemd n'en aurait plus la
+    # trace pour les arrêter ensuite.
+    for unit in $(systemctl list-units --no-legend 'docsearch-worker-*.service' 2>/dev/null | awk '{print $1}'); do
+        n="${unit%.service}"; n="${n##*-}"
+        if [ "$n" -gt "$N" ] 2>/dev/null; then
+            log "Arrêt de $unit..."
+            systemctl stop "$unit" || true
+        fi
+    done
+
+    log "Mise à l'échelle des workers : $N unités..."
+    # shellcheck disable=SC2046  # découpage voulu : rôle + options
+    "$(dirname "$0")/quadlet/install-units.sh" $(cat "$ARGS_FILE") --workers "$N"
+    systemctl start "$TARGET"
+    log "Workers actifs : $(units_running 'docsearch-worker-*.service')"
+    ;;
+
+  build)
+    # Construction des images applicatives. À faire sur une machine
+    # CONNECTÉE (apt-get / pip install / npm ci dans les Dockerfiles) —
+    # voir HOWTO-deploiement-hors-ligne.md pour le transfert vers une
+    # machine isolée.
+    WHAT="${2:-all}"
+    REPOS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+    # ⚠️ podman sépare le magasin d'images de root de celui de chaque
+    # utilisateur : une image construite SANS sudo est invisible pour les
+    # unités systemd, qui tournent en root. Le symptôme est un
+    # "image not known" au démarrage alors que "podman images" la montre.
+    if [ "$(id -u)" -ne 0 ]; then
+        warn "Construction dans le magasin de $USER (podman rootless).
+  Les unités systemd tournent en ROOT et ne verront pas ces images.
+  Au choix :
+    sudo ./manage.sh build $WHAT                        (construire directement en root)
+    podman save -m <images> | sudo podman load          (transférer après coup)"
+    fi
+    # APP_UID : UID de l'utilisateur DANS les conteneurs, à aligner sur le
+    # propriétaire des dossiers montés depuis l'hôte (ex-DOCKER_UID).
+    #   APP_UID=$(id -u) ./manage.sh build all
+    build_one() {
+        local ctx="$1" tag="$2"
+        [ -d "$ctx" ] || err "Dépôt introuvable : $ctx (les dépôts doivent être clonés côte à côte)"
+        log "Construction de $tag depuis $ctx..."
+        $PODMAN build --build-arg APP_UID="${APP_UID:-1000}" -t "$tag" "$ctx"
+    }
+    case "$WHAT" in
+      api)       build_one "$REPOS_DIR/docsearch-api"       "$IMAGE_API" ;;
+      ingestion) build_one "$REPOS_DIR/docsearch-ingestion" "$IMAGE_INGESTION" ;;
+      ui)        build_one "$REPOS_DIR/docsearch-ui-vue"    "$IMAGE_UI" ;;
+      all)
+        build_one "$REPOS_DIR/docsearch-api"       "$IMAGE_API"
+        build_one "$REPOS_DIR/docsearch-ingestion" "$IMAGE_INGESTION"
+        build_one "$REPOS_DIR/docsearch-ui-vue"    "$IMAGE_UI"
+        ;;
+      *) err "Usage : ./manage.sh build [all|api|ingestion|ui]" ;;
+    esac
+    log "Terminé. Redémarrer les unités concernées : sudo ./manage.sh restart"
+    ;;
+
+  dev-user)
+    # Régénère la configuration du proxy de simulation d'utilisateur.
+    # La substitution se fait ICI (et non au démarrage du conteneur) :
+    # une unité Quadlet ne peut pas porter proprement un "sh -c" avec
+    # sed et guillemets imbriqués.
+    require_root
+    USER_NAME="${2:-}"
+    [ -n "$USER_NAME" ] || err "Usage : sudo ./manage.sh dev-user <login>
+  Exemple : sudo ./manage.sh dev-user alice.admin
+  Puis http://localhost:8090/ (ou http://192.168.56.101:8090/)"
+    TEMPLATE="$CONFIG_DIR/nginx/dev-user-proxy.conf.template"
+    [ -f "$TEMPLATE" ] || err "$TEMPLATE introuvable (rôle « dev » uniquement)."
+    sed -e "s/__TEST_X_USER__/$USER_NAME/g" \
+        -e "s/__TEST_UI_TARGET__/ui-vue/g" \
+        "$TEMPLATE" > "$CONFIG_DIR/nginx/dev-user-proxy.conf"
+    log "Utilisateur simulé : $USER_NAME"
+    systemctl restart docsearch-dev-user-proxy 2>/dev/null \
+      || systemctl start docsearch-dev-user-proxy
+    log "Proxy prêt : http://localhost:8090/"
     ;;
 
   add-file-source)
@@ -187,7 +366,7 @@ case "${1:-help}" in
     [ -n "$SUBFOLDER_ARG" ] && PY_ARGS="$PY_ARGS, subfolder=\"$SUBFOLDER_ARG\""
     [ -n "$LABEL_ARG" ]     && PY_ARGS="$PY_ARGS, label=\"$LABEL_ARG\""
 
-    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+    init_run python3 -c "
 from file_sources_config import add_source
 import json
 cfg = add_source($PY_ARGS)
@@ -198,7 +377,7 @@ print(json.dumps(cfg, indent=2, ensure_ascii=False))
     ;;
 
   list-file-sources)
-    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+    init_run python3 -c "
 from file_sources_config import get_sources
 import json
 print(json.dumps({n: {'es_index': s.es_index, 'folder': s.folder, 'label': s.label} for n, s in get_sources().items()}, indent=2, ensure_ascii=False))
@@ -213,7 +392,7 @@ print(json.dumps({n: {'es_index': s.es_index, 'folder': s.folder, 'label': s.lab
   supprime PAS l'index Elasticsearch ni les documents déjà indexés.
   Utiliser ensuite 'purge-path' pour nettoyer l'existant si besoin."
     fi
-    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+    init_run python3 -c "
 from file_sources_config import remove_source
 import json
 print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
@@ -270,11 +449,11 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
            SQL_SRC_FIELDS_JSON="$FIELDS_JSON" SQL_SRC_POLL_INTERVAL="${POLL_ARG:-300}" \
            SQL_SRC_LABEL="$LABEL_ARG"
 
-    $COMPOSE --profile init run --build --rm \
+    init_run \
       -e SQL_SRC_NAME -e SQL_SRC_DB_TYPE -e SQL_SRC_CONN_REF -e SQL_SRC_QUERY \
       -e SQL_SRC_ID_COLUMN -e SQL_SRC_ES_INDEX -e SQL_SRC_FIELDS_JSON -e SQL_SRC_POLL_INTERVAL \
       -e SQL_SRC_LABEL \
-      indexer-init python3 -c "
+      python3 -c "
 import os, json
 from sql_sources_config import add_source
 cfg = add_source(
@@ -296,7 +475,7 @@ print(json.dumps(cfg, indent=2, ensure_ascii=False))
     ;;
 
   list-sql-sources)
-    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+    init_run python3 -c "
 from sql_sources_config import get_sources
 import json
 print(json.dumps({n: {
@@ -318,7 +497,7 @@ print(json.dumps({n: {
   Retire la source du registre (sql-worker arrête de l'interroger) — NE
   supprime PAS l'index Elasticsearch ni les documents déjà indexés."
     fi
-    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+    init_run python3 -c "
 from sql_sources_config import remove_source
 import json
 print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
@@ -336,12 +515,10 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
   tester une source qui vient d'être ajoutée."
     fi
     log "Passage manuel [$NAME]..."
-    # Pas de "--env-file .env" ici : ce flag GLOBAL de docker compose ne
-    # ferait que de l'interpolation \${VAR} dans docker-compose.yml, il
-    # n'injecterait rien dans l'environnement du conteneur. C'est le
-    # "env_file: .env" du service indexer-init (docker-compose.yml) qui
-    # rend le DSN (connection_ref) visible ici.
-    $COMPOSE --profile init run --build --rm indexer-init python3 sql_indexer.py "$NAME"
+    # Le DSN référencé par connection_ref (ex: CLIENTS_DB_DSN) doit être
+    # visible DANS le conteneur : c'est le --env-file de init_run, qui
+    # injecte tout /etc/docsearch/docsearch.env, qui le rend disponible.
+    init_run python3 sql_indexer.py "$NAME"
     ;;
 
   add-web-source)
@@ -379,10 +556,10 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
            WEB_SRC_POLL_INTERVAL="${POLL_ARG:-3600}" WEB_SRC_PUBLIC="$PUBLIC_ARG" \
            WEB_SRC_LABEL="$LABEL_ARG"
 
-    $COMPOSE --profile init run --build --rm \
+    init_run \
       -e WEB_SRC_NAME -e WEB_SRC_CRAWL_INDEX -e WEB_SRC_ES_INDEX -e WEB_SRC_POLL_INTERVAL -e WEB_SRC_PUBLIC \
       -e WEB_SRC_LABEL \
-      indexer-init python3 -c "
+      python3 -c "
 import os, json
 from web_sources_config import add_source
 cfg = add_source(
@@ -401,7 +578,7 @@ print(json.dumps(cfg, indent=2, ensure_ascii=False))
     ;;
 
   list-web-sources)
-    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+    init_run python3 -c "
 from web_sources_config import get_sources
 import json
 print(json.dumps({n: {
@@ -422,7 +599,7 @@ print(json.dumps({n: {
   supprime PAS les index Elasticsearch (crawl_index ni es_index) ni les
   documents déjà indexés."
     fi
-    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+    init_run python3 -c "
 from web_sources_config import remove_source
 import json
 print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
@@ -441,7 +618,7 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
   Open Web Crawler a terminé au moins un crawl."
     fi
     log "Passage manuel [$NAME]..."
-    $COMPOSE --profile init run --build --rm indexer-init python3 web_indexer.py "$NAME"
+    init_run python3 web_indexer.py "$NAME"
     ;;
 
   set-config)
@@ -454,7 +631,7 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
                       worker_flush_interval, watcher_poll_interval,
                       ocr_languages, ocr_strategy"
     fi
-    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+    init_run python3 -c "
 from runtime_config import set_param
 import json
 cfg = set_param('$KEY', '$VALUE')
@@ -466,7 +643,7 @@ print(json.dumps(cfg, indent=2, ensure_ascii=False))
     ;;
 
   get-config)
-    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+    init_run python3 -c "
 from runtime_config import get_runtime_config
 import json
 print(json.dumps(get_runtime_config(), indent=2, ensure_ascii=False))
@@ -482,7 +659,7 @@ print(json.dumps(get_runtime_config(), indent=2, ensure_ascii=False))
              ./manage.sh exclude-path '*/tmp' finance
              ./manage.sh exclude-path '*.cache'"
     fi
-    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+    init_run python3 -c "
 from path_filter import add_excluded
 import json
 print(json.dumps(add_excluded('$PATTERN', '$SOURCE'), indent=2, ensure_ascii=False))
@@ -499,7 +676,7 @@ print(json.dumps(add_excluded('$PATTERN', '$SOURCE'), indent=2, ensure_ascii=Fal
   Bascule en liste blanche : si au moins un motif est inclus, SEULS
   les chemins correspondants sont indexés (l'exclusion reste prioritaire)."
     fi
-    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+    init_run python3 -c "
 from path_filter import add_included
 import json
 print(json.dumps(add_included('$PATTERN', '$SOURCE'), indent=2, ensure_ascii=False))
@@ -513,7 +690,7 @@ print(json.dumps(add_included('$PATTERN', '$SOURCE'), indent=2, ensure_ascii=Fal
     if [ -z "$PATTERN" ]; then
         err "Usage : ./manage.sh remove-path-filter <motif> [source]"
     fi
-    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+    init_run python3 -c "
 from path_filter import remove_filter
 import json
 print(json.dumps(remove_filter('$PATTERN', '$SOURCE'), indent=2, ensure_ascii=False))
@@ -523,7 +700,7 @@ print(json.dumps(remove_filter('$PATTERN', '$SOURCE'), indent=2, ensure_ascii=Fa
 
   list-path-filters)
     SOURCE="${2:-documents}"
-    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+    init_run python3 -c "
 from path_filter import get_config
 import json
 print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
@@ -545,7 +722,7 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
     fi
 
     log "Aperçu (aucune suppression) — documents déjà indexés (source '$SOURCE') correspondant à '$PATTERN' :"
-    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+    init_run python3 -c "
 from file_sources_config import get_source
 from indexer import purge_path
 n = purge_path('$PATTERN', get_source('$SOURCE'), dry_run=True)
@@ -559,7 +736,7 @@ print(f'{n} document(s) correspondent au motif.')
         exit 0
     fi
 
-    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+    init_run python3 -c "
 from file_sources_config import get_source
 from indexer import purge_path
 n = purge_path('$PATTERN', get_source('$SOURCE'), dry_run=False)
@@ -592,7 +769,7 @@ print(f'{n} document(s) supprimé(s) de l\'index.')
     [ -n "$ENABLED_ARG" ]  && PY_ARGS="$PY_ARGS, enabled=$([ "$ENABLED_ARG" = "true" ] && echo True || echo False)"
     [ -n "$MAXSIZE_ARG" ]  && PY_ARGS="$PY_ARGS, max_size_mb=$MAXSIZE_ARG"
 
-    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+    init_run python3 -c "
 from filetype_config import set_filetype
 import json
 cfg = set_filetype($PY_ARGS)
@@ -603,7 +780,7 @@ print(json.dumps(cfg, indent=2, ensure_ascii=False))
 
   get-filetypes)
     SOURCE="${2:-documents}"
-    $COMPOSE --profile init run --build --rm indexer-init python3 -c "
+    init_run python3 -c "
 from filetype_config import get_config
 import json
 print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
@@ -611,11 +788,23 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
     ;;
 
   reset)
+    require_root
     warn "⚠️  Cette commande supprime TOUTES les données."
     read -rp "Confirmer ? (oui/non) : " CONFIRM
     [ "$CONFIRM" = "oui" ] || { log "Annulé."; exit 0; }
-    $COMPOSE --profile dev --profile production down -v
-    log "Volumes supprimés."
+    systemctl stop "$TARGET"
+    # Les volumes créés par Quadlet portent selon la version un préfixe
+    # "systemd-" : on les retrouve au lieu de les supposer. Les données
+    # montées depuis l'hôte (/data/es) ne sont PAS touchées ici.
+    VOLUMES=$($PODMAN volume ls --format '{{.Name}}' 2>/dev/null \
+              | grep -E '^(systemd-)?(es01|es-voting|kafka|redis)-data$' || true)
+    if [ -n "$VOLUMES" ]; then
+        # shellcheck disable=SC2086  # liste de noms, découpage voulu
+        $PODMAN volume rm -f $VOLUMES
+        log "Volumes supprimés : $(echo "$VOLUMES" | tr '\n' ' ')"
+    else
+        warn "Aucun volume DocSearch trouvé."
+    fi
     ;;
 
   backup)
@@ -635,19 +824,22 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
     echo "  Usage : ./manage.sh <commande>"
     echo ""
     echo "  Commandes :"
-    echo "    start           Démarrer en mode développement (ES single-node)"
-    echo "    start-prod      Démarrer en mode production (cluster 3 nœuds)"
-    echo "    stop            Arrêter tous les services"
-    echo "    restart         Redémarrer en mode dev"
-    echo "    status          État + stats Elasticsearch"
-    echo "    logs [service]  Logs en temps réel"
+    echo "    start           Démarrer la pile (sudo — systemctl start docsearch.target)"
+    echo "    stop            Arrêter la pile (sudo)"
+    echo "    restart         Redémarrer la pile (sudo)"
+    echo "    status          État des unités + stats Elasticsearch"
+    echo "    logs [service]  Journaux en temps réel (journalctl) — 'logs worker'"
+    echo "                    suit toutes les unités worker à la fois"
+    echo "    build [cible]   Construire les images (all|api|ingestion|ui) — machine CONNECTÉE"
+    echo "    dev-user <login>  Régler l'utilisateur simulé du proxy de développement (sudo)"
     echo "    init [source] [sous-dossier]"
     echo "                    Indexation d'une source (défaut : 'documents'), complète"
     echo "                    ou restreinte à un sous-dossier de son répertoire"
-    echo "    scale-workers N Ajuster le nombre de workers"
+    echo "    scale-workers N Ajuster le nombre d'unités worker (sudo)"
     echo "    add-file-source <nom> <index_es> [--subfolder ...] [--label ...]"
     echo "                    Enregistrer une nouvelle source à indexer — sans"
-    echo "                    redémarrage ni rebuild, voir SOURCES_ROOT dans .env"
+    echo "                    redémarrage ni reconstruction, voir SOURCES_HOST_PATH"
+    echo "                    dans /etc/docsearch/docsearch.env"
     echo "    list-file-sources    Lister les sources fichiers enregistrées"
     echo "    remove-file-source <nom>"
     echo "                    Retirer une source du registre (ne supprime PAS son index)"
@@ -683,7 +875,22 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
     echo "    purge-path <motif> [source]         Supprimer de l'index les documents déjà"
     echo "                                        indexés correspondant au motif (avec confirmation)"
     echo "    backup          Snapshot Elasticsearch"
-    echo "    reset           Supprimer toutes les données (irréversible)"
+    echo "    reset           Supprimer toutes les données (irréversible, sudo)"
+    echo ""
+    echo "  ⚠️  Toutes les commandes d'administration (init, add-*-source,"
+    echo "     set-config, set-filetype, exclude-path, purge-path...) lancent un"
+    echo "     conteneur jetable sur le réseau de la pile : elles exigent sudo,"
+    echo "     comme start/stop/restart. Seules status, logs, get-config et les"
+    echo "     list-* fonctionnent sans."
+    echo ""
+    echo "  Installation des unités (une fois par machine) :"
+    echo "    sudo ./quadlet/install-units.sh dev                    poste de développement"
+    echo "    sudo ./quadlet/install-units.sh <rôle> [--workers N]   serveurs de production"
+    echo "                    rôles : es-data, es-voting, kafka, frontend, ingest"
+    echo ""
+    echo "  Machine sans accès Internet :"
+    echo "    Aucune construction n'a lieu au démarrage — les images doivent"
+    echo "    déjà être présentes (podman load). Voir HOWTO-deploiement-hors-ligne.md"
     echo ""
     ;;
 esac

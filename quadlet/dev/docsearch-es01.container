@@ -1,0 +1,50 @@
+# ── Elasticsearch — nœud unique (mono-hôte) ───────────────────
+# Équivalent du service "es01-dev" de l'ancien docker-compose.yml.
+# Pas de cluster.initial_master_nodes : incompatible avec
+# discovery.type=single-node en ES 9.x.
+
+[Unit]
+Description=DocSearch — Elasticsearch (nœud unique)
+PartOf=docsearch.target
+
+[Container]
+ContainerName=docsearch-es01
+Image=docker.elastic.co/elasticsearch/elasticsearch:9.4.3
+Network=docsearch-net.network
+Volume=es01-data.volume:/usr/share/elasticsearch/data
+PublishPort=9200:9200
+
+Environment=node.name=es01
+Environment=cluster.name=docsearch-cluster
+Environment=discovery.type=single-node
+Environment=bootstrap.memory_lock=false
+Environment=xpack.security.enabled=false
+EnvironmentFile=/etc/docsearch/elasticsearch.env
+
+# Alias réseau : les autres conteneurs joignent ce nœud par le nom de
+# service de l'ancien Compose (ES_HOST=http://es01-dev:9200). Les deux
+# noms sont déclarés pour que la valeur de docsearch.env fonctionne
+# qu'elle vienne de l'ancien .env (es01) ou de x-app-env (es01-dev).
+#
+# --ulimit passe par PodmanArgs : la clé Quadlet dédiée n'existe pas sur
+# toutes les versions visées (podman 4.9 en production), PodmanArgs si.
+PodmanArgs=--network-alias=es01-dev --network-alias=es01 --ulimit=memlock=-1:-1 --ulimit=nofile=65536:65536
+
+# Équivalent du healthcheck Compose ("répond, et pas en rouge") : avec
+# wait_for_status=yellow, ES renvoie 408 tant que le cluster est rouge,
+# et curl -sf échoue. Écrit sans pipe ni guillemets, que Quadlet
+# transmettrait mal à --health-cmd.
+HealthCmd=curl -sf --max-time 15 http://localhost:9200/_cluster/health?wait_for_status=yellow
+HealthInterval=20s
+HealthTimeout=20s
+HealthRetries=5
+HealthStartPeriod=60s
+
+[Service]
+Restart=always
+RestartSec=10
+# Un nœud ES froid peut mettre 60-90 s à répondre sur une VM contrainte
+TimeoutStartSec=180
+
+[Install]
+WantedBy=docsearch.target

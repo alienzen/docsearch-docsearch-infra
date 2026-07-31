@@ -1,0 +1,17 @@
+# ── Apache Tika (serveur 3) — optionnel ───────────────────────
+# Voir docsearch-tika1.container et docsearch-tika2.container.
+
+[Unit]
+Description=DocSearch — Apache Tika 3
+PartOf=docsearch.target
+
+[Container]
+ContainerName=docsearch-tika3
+Image=docker.io/apache/tika:3.3.1.0-full
+Network=docsearch-net.network
+PublishPort=10000:9998
+PodmanArgs=--network-alias=tika3
+
+[Service]
+Restart=always
+RestartSec=10

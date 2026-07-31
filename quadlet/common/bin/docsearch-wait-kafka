@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────
+#  docsearch-wait-kafka — attend que le broker Kafka accepte les
+#  connexions, puis rend la main. Appelé par docsearch-kafka-ready.service.
+#
+#  La cible est lue dans KAFKA_HEALTH_HOSTPORT (docsearch.env), qui est
+#  une adresse vue DEPUIS L'HÔTE — à ne pas confondre avec
+#  KAFKA_BOOTSTRAP, qui est l'adresse vue depuis les conteneurs
+#  ("kafka:9092", un nom résolu par aardvark-dns à l'intérieur du réseau
+#  podman et donc inutilisable ici).
+#
+#    mono-hôte  : localhost:9092  (le port est publié par l'unité Kafka)
+#    multi-hôte : <IP_KAFKA>:9092 (machine kafka dédiée, Network=host)
+#
+#  Le test se fait avec /dev/tcp de bash : aucune dépendance à installer
+#  sur les serveurs (ni nc, ni curl, ni python).
+# ─────────────────────────────────────────────────────────────
+set -uo pipefail
+
+TARGET="${KAFKA_HEALTH_HOSTPORT:-localhost:9092}"
+HOST="${TARGET%:*}"
+PORT="${TARGET##*:}"
+ATTEMPTS="${KAFKA_HEALTH_ATTEMPTS:-120}"
+INTERVAL="${KAFKA_HEALTH_INTERVAL:-5}"
+
+for _ in $(seq 1 "$ATTEMPTS"); do
+    if timeout 2 bash -c "exec 3<>/dev/tcp/${HOST}/${PORT}" 2>/dev/null; then
+        echo "Kafka joignable sur ${TARGET}."
+        exit 0
+    fi
+    sleep "$INTERVAL"
+done
+
+echo "Kafka injoignable sur ${TARGET} après $((ATTEMPTS * INTERVAL))s — abandon." >&2
+exit 1

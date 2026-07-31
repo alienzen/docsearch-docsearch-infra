@@ -1,0 +1,25 @@
+# ── Worker web (synchronisation crawl_index → DocSearch) ──────
+# Relit les sources web enregistrées (./manage.sh add-web-source) et
+# transforme le contenu déjà présent dans leur crawl_index vers le
+# schéma DocSearch. Ne pilote PAS le crawl lui-même : c'est le rôle de
+# docsearch-web-crawler-*.container.
+
+[Unit]
+Description=DocSearch — worker web
+PartOf=docsearch.target
+After=docsearch-redis.service
+Requires=docsearch-redis.service
+
+[Container]
+ContainerName=docsearch-web-worker
+Image=localhost/docsearch/ingestion:latest
+Network=docsearch-net.network
+Exec=python web_worker.py
+EnvironmentFile=/etc/docsearch/docsearch.env
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=docsearch.target

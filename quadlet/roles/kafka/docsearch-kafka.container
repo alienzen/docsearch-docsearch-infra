@@ -1,0 +1,33 @@
+# ── Kafka — broker unique (machine kafka) ─────────────────────
+# Mode KRaft (sans Zookeeper). Un seul broker, cohérent avec son rôle :
+# une file de travail pour paralléliser l'indexation, pas un système
+# d'enregistrement durable — un message perdu est rattrapé au prochain
+# scan complet.
+#
+# Network=host : les workers des 3 machines d'ingestion joignent le
+# broker par l'IP de cette machine (KAFKA_BOOTSTRAP dans leur
+# docsearch.env).
+
+[Unit]
+Description=DocSearch — broker Kafka (KRaft)
+PartOf=docsearch.target
+
+[Container]
+ContainerName=docsearch-kafka
+Image=docker.io/confluentinc/cp-kafka:8.3.0
+Network=host
+Volume=kafka-data.volume:/var/lib/kafka/data
+EnvironmentFile=/etc/docsearch/kafka.env
+
+HealthCmd=kafka-topics --bootstrap-server localhost:9092 --list
+HealthInterval=30s
+HealthTimeout=10s
+HealthRetries=5
+HealthStartPeriod=30s
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=docsearch.target

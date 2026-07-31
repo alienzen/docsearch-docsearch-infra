@@ -1,0 +1,8 @@
+# Données Elasticsearch (mono-hôte).
+#
+# ⚠️ Les volumes podman sont distincts des anciens volumes Docker
+# (docsearch-infra_es01_data) : la pile redémarre avec un index VIDE.
+# Prévoir une réindexation (./manage.sh init) après la bascule, ou
+# restaurer un snapshot ES (./manage.sh backup avant la migration).
+
+[Volume]

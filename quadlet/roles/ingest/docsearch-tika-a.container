@@ -1,0 +1,25 @@
+# ── Apache Tika A (machines d'ingestion) ──────────────────────
+# Deux serveurs Tika par machine d'ingestion, ports 9998 et 9999,
+# publiés pour que les workers des AUTRES machines puissent les
+# utiliser (TIKA_SERVERS liste les 6 serveurs des 3 machines).
+#
+# Pas de HealthCmd : les images officielles apache/tika n'embarquent pas
+# d'outil HTTP utilisable (TIKA-3333) — le suivi se fait depuis l'API
+# (panneau /admin/status).
+
+[Unit]
+Description=DocSearch — Apache Tika A
+PartOf=docsearch.target
+
+[Container]
+ContainerName=docsearch-tika-a
+Image=docker.io/apache/tika:3.3.1.0-full
+Network=docsearch-net.network
+PublishPort=9998:9998
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=docsearch.target

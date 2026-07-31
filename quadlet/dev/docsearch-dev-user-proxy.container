@@ -1,0 +1,30 @@
+# ── Proxy de simulation d'utilisateur — DÉVELOPPEMENT ─────────
+# Alternative à une extension navigateur (type ModHeader) : injecte le
+# header X-User dans chaque requête vers l'interface.
+#   http://192.168.56.101:8090/  (ou http://localhost:8090/)
+#
+# Pas de [Install] : unité de confort, démarrée à la demande.
+#   sudo systemctl start docsearch-dev-user-proxy
+#
+# Changer d'utilisateur simulé :
+#   sudo ./manage.sh dev-user bob.user
+# qui régénère /etc/docsearch/nginx/dev-user-proxy.conf depuis le modèle
+# et redémarre cette unité. La substitution est faite À L'INSTALLATION,
+# plus au démarrage du conteneur : une unité Quadlet ne peut pas porter
+# proprement un "sh -c" avec sed et guillemets imbriqués.
+
+[Unit]
+Description=DocSearch — proxy de simulation d'utilisateur (dev)
+PartOf=docsearch.target
+After=docsearch-ui-vue.service
+
+[Container]
+ContainerName=docsearch-dev-user-proxy
+Image=docker.io/library/nginx:1.27-alpine
+Network=docsearch-net.network
+PublishPort=8090:80
+Volume=/etc/docsearch/nginx/dev-user-proxy.conf:/etc/nginx/nginx.conf:ro
+
+[Service]
+Restart=always
+RestartSec=10

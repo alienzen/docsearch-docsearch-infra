@@ -1,0 +1,4 @@
+# Journaux Kafka (file de travail, pas un stockage durable — un message
+# perdu est rattrapé au prochain scan complet).
+
+[Volume]

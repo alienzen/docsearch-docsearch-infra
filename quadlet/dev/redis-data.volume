@@ -1,0 +1,4 @@
+# Persistance Redis (RDB) — registres des sources, configuration à chaud,
+# historique des recherches. À sauvegarder au même titre qu'Elasticsearch.
+
+[Volume]

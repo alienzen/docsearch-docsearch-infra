@@ -1,4 +1,7 @@
 .env
+# Sauvegardes du .env : elles portent le mot de passe LDAP et les DSN SQL
+.env.bak.*
 nginx/certs/
 *.tar.gz
 backups/
+.idea/

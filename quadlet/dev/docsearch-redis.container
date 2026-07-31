@@ -1,0 +1,28 @@
+# ── Redis ─────────────────────────────────────────────────────
+# Registres des sources (fichier/SQL/web), configuration à chaud,
+# historique des recherches, collections sauvegardées.
+
+[Unit]
+Description=DocSearch — Redis
+PartOf=docsearch.target
+
+[Container]
+ContainerName=docsearch-redis
+Image=docker.io/library/redis:7.2-alpine
+Network=docsearch-net.network
+Volume=redis-data.volume:/data
+PublishPort=6379:6379
+PodmanArgs=--network-alias=redis
+Exec=redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+
+HealthCmd=redis-cli ping
+HealthInterval=10s
+HealthTimeout=3s
+HealthRetries=3
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=docsearch.target

@@ -1,0 +1,38 @@
+# ── Worker d'indexation (modèle) ──────────────────────────────
+# CE FICHIER N'EST PAS UNE UNITÉ : c'est le modèle à partir duquel
+# install-units.sh et "manage.sh scale-workers N" génèrent
+# docsearch-worker-1.container … docsearch-worker-N.container, en
+# remplaçant @N@ par le numéro.
+#
+# Pourquoi des fichiers séparés plutôt qu'une unité template systemd
+# (docsearch-worker@.container) : le support des templates par Quadlet
+# dépend de la version de podman, et la production vise 4.9. Des unités
+# explicites fonctionnent partout et restent lisibles dans
+# "systemctl list-units".
+#
+# Le parallélisme réel est plafonné par le nombre de partitions Kafka
+# (KAFKA_NUM_PARTITIONS=16) : au-delà de 16 workers, les suivants
+# resteraient inactifs.
+
+[Unit]
+Description=DocSearch — worker d'indexation @N@
+PartOf=docsearch.target
+After=docsearch-kafka-ready.service
+Requires=docsearch-kafka-ready.service
+
+[Container]
+ContainerName=docsearch-worker-@N@
+Image=localhost/docsearch/ingestion:latest
+Network=docsearch-net.network
+Exec=python worker.py
+EnvironmentFile=/etc/docsearch/docsearch.env
+Volume=/documents:/sources:ro
+# Équivalent de deploy.resources.limits de l'ancien Compose
+PodmanArgs=--cpus=1.5 --memory=1g
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=docsearch.target

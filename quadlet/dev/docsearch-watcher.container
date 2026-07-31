@@ -1,0 +1,23 @@
+# ── Watcher (surveillance des dossiers sources) ───────────────
+# Détecte les créations/modifications sous /sources et publie sur Kafka.
+
+[Unit]
+Description=DocSearch — watcher
+PartOf=docsearch.target
+After=docsearch-kafka-ready.service
+Requires=docsearch-kafka-ready.service
+
+[Container]
+ContainerName=docsearch-watcher
+Image=localhost/docsearch/ingestion:latest
+Network=docsearch-net.network
+Exec=python watcher.py
+EnvironmentFile=/etc/docsearch/docsearch.env
+Volume=/documents:/sources:ro
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=docsearch.target

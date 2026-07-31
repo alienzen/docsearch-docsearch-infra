@@ -1,0 +1,27 @@
+# ── Kibana — optionnel ────────────────────────────────────────
+# Confort d'exploitation (exploration des index, requêtes manuelles),
+# jamais nécessaire au fonctionnement de DocSearch. Pas de [Install] :
+# à démarrer à la demande, c'est le plus gros consommateur de RAM de la
+# pile après Elasticsearch.
+#   sudo systemctl start docsearch-kibana   → http://localhost:5601
+
+[Unit]
+Description=DocSearch — Kibana
+PartOf=docsearch.target
+After=docsearch-es01.service
+
+[Container]
+ContainerName=docsearch-kibana
+Image=docker.elastic.co/kibana/kibana:9.4.3
+Network=docsearch-net.network
+PublishPort=5601:5601
+PodmanArgs=--network-alias=kibana
+Environment=ELASTICSEARCH_HOSTS=http://es01-dev:9200
+# La télémétrie tente de joindre elastic.co : sans effet fonctionnel,
+# mais elle génère du trafic sortant bloqué et du bruit dans les
+# journaux sur un réseau isolé (voir HOWTO-deploiement-hors-ligne.md).
+Environment=TELEMETRY_ENABLED=false
+
+[Service]
+Restart=always
+RestartSec=10

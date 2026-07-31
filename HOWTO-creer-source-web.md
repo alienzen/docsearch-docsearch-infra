@@ -39,15 +39,16 @@ seule commande**, contrairement à une source fichier. Il faut créer
 trois choses, dans cet ordre :
 
 1. un nouveau fichier YAML de config crawler ;
-2. un nouveau service docker-compose pour faire tourner ce crawler ;
+2. une nouvelle unité systemd pour faire tourner ce crawler ;
 3. un enregistrement DocSearch (`manage.sh`, API ou UI admin) qui relie
    l'index de crawl à un index final.
 
 ## Prérequis
 
-- Le stack DocSearch tourne (`./manage.sh start` ou `start-prod`) —
-  `web-worker` doit être actif (il tourne par défaut, profils `dev` et
-  `production`, aucune activation particulière requise).
+- La pile DocSearch tourne (`sudo ./manage.sh start`) — `web-worker`
+  doit être actif : démarré par défaut en mono-hôte, à activer
+  explicitement sur la machine `frontend` en production
+  (`sudo systemctl start docsearch-web-worker`).
 - Connaître le domaine à crawler, ses éventuelles `sitemap_urls`, et les
   règles d'inclusion/exclusion souhaitées (`crawl_rules`).
 - Avoir choisi deux noms d'index **distincts** : l'un pour le crawl brut
@@ -101,31 +102,39 @@ Points d'attention :
   catch-all (`pattern: /`) est le pattern utilisé dans l'exemple existant
   du projet pour n'autoriser explicitement que les chemins voulus plutôt
   que de tout crawler par défaut.
-- `elasticsearch.host` pointe vers le cluster ES du stack (nom du
-  service Docker, pas `localhost`, puisque le crawler tourne dans son
-  propre conteneur sur le réseau `docsearch-net`).
+- `elasticsearch.host` pointe vers le cluster ES de la pile (nom du
+  conteneur ou alias réseau, pas `localhost`, puisque le crawler tourne
+  dans son propre conteneur sur le réseau `docsearch-net`).
 - `schedule.pattern` est **entièrement géré par le crawler lui-même** —
   DocSearch n'y touche pas ; c'est indépendant de
   `poll_interval_seconds` (étape 3), qui régit uniquement la cadence à
   laquelle DocSearch *relit* le résultat déjà présent dans l'index de
   crawl.
 
-## Étape 2 : ajouter le service docker-compose et démarrer le crawler
+## Étape 2 : ajouter l'unité du crawler et le démarrer
 
-Dans `docker-compose.yml`, dupliquer le service existant
-`web-crawler-cc-decisions` (~ligne 446) en l'adaptant :
+Dupliquer l'unité existante
+`quadlet/dev/docsearch-web-crawler-cc-decisions.container` en l'adaptant :
 
-```yaml
-  web-crawler-mon-site:
-    image: docker.elastic.co/integrations/crawler:latest
-    container_name: docsearch-web-crawler-mon-site
-    profiles: ["dev", "production"]
-    command: jruby bin/crawler schedule /config/mon-site.yml
-    volumes:
-      - ./crawlers:/config:ro
-    networks:
-      - docsearch-net
-    restart: unless-stopped
+```ini
+# quadlet/dev/docsearch-web-crawler-mon-site.container
+[Unit]
+Description=DocSearch — crawler web (mon_site)
+PartOf=docsearch.target
+
+[Container]
+ContainerName=docsearch-web-crawler-mon-site
+Image=docker.elastic.co/integrations/crawler:1.0.0
+Network=docsearch-net.network
+Exec=jruby bin/crawler schedule /config/mon-site.yml
+Volume=/etc/docsearch/crawlers:/config:ro
+
+[Service]
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=docsearch.target
 ```
 
 Points d'attention :
@@ -133,25 +142,26 @@ Points d'attention :
 - La commande est `schedule`, pas `crawl` — `crawl` ne fait qu'une seule
   passe puis s'arrête, `schedule` tourne en continu et respecte le
   `schedule:` cron déclaré dans le YAML.
-- Le volume monte tout le dossier `./crawlers` (pas juste le fichier) en
-  lecture seule — un seul volume suffit pour tous les crawlers du
-  projet, chaque service pointe juste vers son propre fichier via
-  `command`.
-- Un site supplémentaire = un nouveau service du même genre : `schedule`
+- Le volume monte tout le dossier `/etc/docsearch/crawlers` (pas juste le
+  fichier) en lecture seule — un seul montage suffit pour tous les
+  crawlers, chaque unité pointe vers son propre fichier via `Exec=`.
+- Un site supplémentaire = une nouvelle unité du même genre : `schedule`
   ne gère qu'un seul fichier de config à la fois, donc pas de
   mutualisation possible entre plusieurs sites dans un même conteneur.
+- Le tag d'image est **épinglé** : voir
+  [HOWTO-deploiement-hors-ligne.md](HOWTO-deploiement-hors-ligne.md).
 
-Puis démarrer (ou redémarrer) le stack pour que le nouveau service soit
-créé :
+Puis installer et démarrer :
 
 ```bash
 cd docsearch-infra
-docker compose up -d web-crawler-mon-site
+sudo ./quadlet/install-units.sh dev     # copie l'unité + la config de crawl
+sudo systemctl start docsearch-web-crawler-mon-site
 ```
 
 ⚠️ Contrairement à l'enregistrement de la source côté DocSearch (étape
-3), **ceci nécessite bien de créer un nouveau conteneur** — ajouter un
-service docker-compose n'est pas une opération à chaud.
+3), **ceci crée bien un nouveau conteneur** — ajouter une unité n'est pas
+une opération à chaud.
 
 ## Étape 3 : enregistrer la source côté DocSearch
 
@@ -164,7 +174,7 @@ Trois méthodes, au même statut. Les champs correspondent à
 
 ```bash
 cd docsearch-infra
-./manage.sh add-web-source mon_site mon_site_raw mon_site --poll-interval 3600 --label "Mon site"
+sudo ./manage.sh add-web-source mon_site mon_site_raw mon_site --poll-interval 3600 --label "Mon site"
 ```
 
 ```text
@@ -232,7 +242,7 @@ vient d'être ajoutée — à condition que le crawler ait déjà terminé au
 moins un passage (sinon `crawl_index` est vide ou inexistant) :
 
 ```bash
-./manage.sh run-web-source mon_site
+sudo ./manage.sh run-web-source mon_site
 ```
 
 Déclenche immédiatement un passage complet
@@ -283,7 +293,7 @@ source à l'étape 3 — pas de gestion d'ACL fine par page).
   `crawl_index → es_index` (web-worker saute la source à chaque tick) —
   **n'arrête PAS le conteneur crawler**, qui continue de tourner et de
   peupler `crawl_index` selon son propre cron tant qu'il n'est pas
-  arrêté séparément (`docker compose stop web-crawler-mon-site`). Les
+  arrêté séparément (`sudo systemctl stop docsearch-web-crawler-mon-site`). Les
   documents déjà dans `es_index` restent cherchables pendant la
   suspension.
 - **Modifier le libellé** : `POST /admin/web-sources/{name}/label`, ou
@@ -295,7 +305,7 @@ source à l'étape 3 — pas de gestion d'ACL fine par page).
   `searchable=false` retire la source de `/search` sans arrêter la
   synchro ; `collectable=false` bloque l'ajout à une collection sans
   effet sur la recherche.
-- **Forcer un passage manuel** : `./manage.sh run-web-source <nom>` —
+- **Forcer un passage manuel** : `sudo ./manage.sh run-web-source <nom>` —
   utile après une modification de `crawl_rules` suivie d'un recrawl
   manuel, pour ne pas attendre `poll_interval_seconds`.
 - **Changer `crawl_index`, `es_index` ou `poll_interval_seconds`** : pas
@@ -306,7 +316,7 @@ source à l'étape 3 — pas de gestion d'ACL fine par page).
 ## Retirer une source web
 
 ```bash
-./manage.sh remove-web-source mon_site
+sudo ./manage.sh remove-web-source mon_site
 ```
 
 Retire **uniquement** l'entrée du registre (`web-worker` arrête de la
@@ -322,11 +332,12 @@ Et si le site ne doit plus être crawlé du tout, arrêter et retirer aussi
 le conteneur crawler :
 
 ```bash
-docker compose stop web-crawler-mon-site
-docker compose rm -f web-crawler-mon-site
+sudo systemctl stop docsearch-web-crawler-mon-site
+sudo rm /etc/containers/systemd/docsearch-web-crawler-mon-site.container
+sudo systemctl daemon-reload
 ```
 
-(puis retirer le service de `docker-compose.yml` et le fichier YAML sous
+(puis retirer l'unité de `quadlet/dev/` et le fichier YAML sous
 `crawlers/` si le nettoyage doit être définitif).
 
 ## Dépannage
@@ -335,12 +346,12 @@ docker compose rm -f web-crawler-mon-site
   `web_indexer.py`, levée plutôt que de traiter un index absent comme
   "0 page, tout supprimer") : le crawler n'a probablement jamais tourné
   pour ce site — vérifier `output_index` dans le YAML, et que le service
-  docker-compose du crawler est bien démarré
-  (`docker compose ps web-crawler-mon-site`, `docker compose logs
-  web-crawler-mon-site`).
+  l'unité du crawler est bien démarrée
+  (`systemctl status docsearch-web-crawler-mon-site`, `journalctl -u
+  docsearch-web-crawler-mon-site`).
 - **La source n'est jamais synchronisée automatiquement** : vérifier
   qu'elle n'est pas `paused` (`list-web-sources` ou panneau admin), et
-  que `web-worker` tourne (`docker compose ps web-worker`). Un passage
+  que `web-worker` tourne (`systemctl status docsearch-web-worker`). Un passage
   encore en cours au moment où l'intervalle suivant arrive est
   simplement sauté pour ce tick (jamais deux passages concurrents de la
   même source) — normal sur un très gros crawl, pas un bug.
@@ -352,7 +363,7 @@ docker compose rm -f web-crawler-mon-site
   mauvaise config `output_index`, robots.txt bloquant soudainement tout)
   déclenche ce refus plutôt que de purger tout l'index DocSearch — un
   message d'erreur explicite apparaît dans les logs de `web-worker`
-  (`docker compose logs web-worker`). Vérifier `crawl_index` avant toute
+  (`journalctl -u docsearch-web-worker`). Vérifier `crawl_index` avant toute
   purge manuelle.
 - **`crawl_index` et `es_index` identiques** refusé à l'enregistrement
   (étape 3) — erreur de validation explicite, pas un crash silencieux

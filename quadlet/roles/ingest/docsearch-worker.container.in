@@ -1,0 +1,34 @@
+# ── Worker d'indexation (modèle, machines d'ingestion) ────────
+# CE FICHIER N'EST PAS UNE UNITÉ : install-units.sh et
+# "manage.sh scale-workers N" génèrent docsearch-worker-1.container …
+# docsearch-worker-N.container en remplaçant @N@.
+#
+# 3 workers par machine d'ingestion (WORKERS_PER_INGEST_NODE de
+# l'ancien Compose), soit 9 au total sur les 3 machines — sous le
+# plafond de 16 partitions Kafka.
+#
+# ⚠️ Mise à jour : traiter UNE MACHINE À LA FOIS (ingest-1, puis -2,
+# puis -3) pour qu'il reste toujours des consommateurs Kafka actifs.
+
+[Unit]
+Description=DocSearch — worker d'indexation @N@
+PartOf=docsearch.target
+After=docsearch-kafka-ready.service
+Requires=docsearch-kafka-ready.service
+
+[Container]
+ContainerName=docsearch-worker-@N@
+Image=localhost/docsearch/ingestion:latest
+Network=docsearch-net.network
+Exec=python worker.py
+EnvironmentFile=/etc/docsearch/docsearch.env
+# Partage réseau des sources, monté en lecture seule sur l'hôte
+Volume=/data/docsearch-sources:/sources:ro
+PodmanArgs=--cpus=1.2 --memory=1g
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=docsearch.target

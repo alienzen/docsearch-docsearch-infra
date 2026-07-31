@@ -10,7 +10,7 @@ l'orchestration.
 L'interface est [docsearch-ui-vue](../docsearch-ui-vue/README.md), **Vue 3
 conforme au Système de Design de l'État**. Elle a remplacé `docsearch-ui`
 (HTML/JS sans build), dont le dépôt est conservé pour référence et
-mobilisable en repli (profil `legacy` du docker-compose). Deux
+mobilisable en repli (image construite à la main, sans unité systemd). Deux
 fonctionnalités de l'ancienne interface n'ont pas été reprises et sont
 retirées du produit : les 7 thèmes de couleur maison, remplacés par le
 clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
@@ -35,6 +35,9 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
 - **Facettes** : type de fichier, période (date de modification), source,
   auteur, mots-clés, dossier — plus des facettes personnalisées par
   source SQL (colonnes marquées "facette" dans son mapping).
+  Sélection multiple combinée en OU dans une même facette, sauf les
+  mots-clés (champ multi-valué) combinés en ET : cocher un second
+  mot-clé restreint aux documents qui portent les deux.
 - **Tri** des résultats (pertinence, date...).
 - **Documents similaires** ("More Like This") depuis la fiche détail.
 - **Aperçu de documents** en ligne (conversion PDF à la volée via
@@ -74,7 +77,7 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   suppression, renommage de fichier ou de dossier entier.
 - **Pipeline producer/workers** (Kafka) pour l'indexation initiale à haut
   débit : plusieurs workers en parallèle, scalable horizontalement
-  (`./manage.sh scale-workers N`).
+  (`sudo ./manage.sh scale-workers N`).
 - **OCR** (Tesseract via Tika) pour les PDF scannés et les images
   (jpg/png/tiff/bmp), activable **par source**, français par défaut.
 - **Extraction ACL** POSIX (owner/group/permissions) et `getfacl`.
@@ -159,8 +162,15 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
 - **Architecture multi-dépôts** (6 dépôts indépendants — ingestion, API,
   UI, orchestration, documents commerciaux, génération de jeux de test)
   pour des cycles de déploiement et un contexte de développement séparés.
-- **Orchestration Docker Compose**, profils dev (ES single-node, 1
-  worker) et prod (cluster ES 3 nœuds, Nginx, TLS).
-- **Scaling horizontal** des workers d'indexation.
+- **Orchestration podman + systemd (Quadlet)** : chaque service est une
+  unité systemd, démarrage au boot, journaux dans journald. Pile
+  mono-hôte (ES single-node) ou déploiement 8 machines par rôle
+  (cluster ES 3 nœuds, Nginx, TLS).
+- **Scaling horizontal** des workers d'indexation — une unité systemd par
+  worker, ajustable par `manage.sh scale-workers N`.
 - **CLI complète** (`manage.sh`) : démarrage/arrêt, indexation, gestion
-  des sources et de leur configuration, sauvegarde, réinitialisation.
+  des sources et de leur configuration, construction des images,
+  sauvegarde, réinitialisation.
+- **Déploiement hors ligne** : la production tourne sur un réseau isolé,
+  les images y arrivent par transfert (`podman save`/`load`) et aucune
+  construction n'a lieu au démarrage.

@@ -1,0 +1,4 @@
+# Métadonnées du nœud voting-only : il ne porte AUCUNE donnée indexée,
+# ce volume reste minuscule (état du cluster uniquement).
+
+[Volume]

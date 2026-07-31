@@ -1,0 +1,30 @@
+# ── Elasticsearch — nœud voting-only (es-voting) ──────────────
+# Troisième voix du quorum, sans données : évite le split-brain d'un
+# cluster à 2 nœuds sans exiger une troisième machine de stockage.
+# Réglages dans /etc/docsearch/elasticsearch.env.
+
+[Unit]
+Description=DocSearch — Elasticsearch (voting-only)
+PartOf=docsearch.target
+
+[Container]
+ContainerName=docsearch-es03-voting
+Image=docker.elastic.co/elasticsearch/elasticsearch:9.4.3
+Network=host
+Volume=es-voting-data.volume:/usr/share/elasticsearch/data
+EnvironmentFile=/etc/docsearch/elasticsearch.env
+PodmanArgs=--ulimit=memlock=-1:-1 --ulimit=nofile=65536:65536
+
+HealthCmd=curl -sf --max-time 15 http://localhost:9200/_cluster/health?wait_for_status=yellow
+HealthInterval=20s
+HealthTimeout=20s
+HealthRetries=5
+HealthStartPeriod=90s
+
+[Service]
+Restart=always
+RestartSec=10
+TimeoutStartSec=300
+
+[Install]
+WantedBy=docsearch.target

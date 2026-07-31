@@ -1,0 +1,26 @@
+# ── Watcher (ingest-1 UNIQUEMENT) ─────────────────────────────
+# Surveille le partage des sources et publie les nouveautés sur Kafka.
+# Service SINGLETON : deux watchers publieraient chaque fichier deux
+# fois. Installé par "install-units.sh ingest --with-singletons", donc
+# sur ingest-1 seulement.
+
+[Unit]
+Description=DocSearch — watcher
+PartOf=docsearch.target
+After=docsearch-kafka-ready.service
+Requires=docsearch-kafka-ready.service
+
+[Container]
+ContainerName=docsearch-watcher
+Image=localhost/docsearch/ingestion:latest
+Network=docsearch-net.network
+Exec=python watcher.py
+EnvironmentFile=/etc/docsearch/docsearch.env
+Volume=/data/docsearch-sources:/sources:ro
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=docsearch.target

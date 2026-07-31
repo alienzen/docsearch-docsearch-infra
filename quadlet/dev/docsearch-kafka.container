@@ -1,0 +1,51 @@
+# ── Kafka 8.3 — mode KRaft (sans Zookeeper) ───────────────────
+# Confluent Platform 8.3 embarque Kafka 4.3, qui abandonne Zookeeper au
+# profit de KRaft : le coordinateur est intégré au broker.
+#
+# Le port 9092 est publié sur l'hôte — il ne l'était pas sous Compose.
+# C'est ce qui permet à docsearch-kafka-ready.service de tester le
+# broker depuis l'hôte, sans avoir à entrer dans le réseau podman.
+
+[Unit]
+Description=DocSearch — broker Kafka (KRaft)
+PartOf=docsearch.target
+
+[Container]
+ContainerName=docsearch-kafka
+Image=docker.io/confluentinc/cp-kafka:8.3.0
+Network=docsearch-net.network
+Volume=kafka-data.volume:/var/lib/kafka/data
+PublishPort=9092:9092
+PodmanArgs=--network-alias=kafka
+
+Environment=KAFKA_NODE_ID=1
+Environment=KAFKA_PROCESS_ROLES=broker,controller
+Environment=KAFKA_CONTROLLER_QUORUM_VOTERS=1@kafka:9093
+Environment=KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+Environment=KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+Environment=KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+Environment=KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER
+Environment=KAFKA_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+Environment=KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
+Environment=KAFKA_AUTO_CREATE_TOPICS_ENABLE=true
+# Partitions des topics auto-créés — CRITIQUE pour le débit : le
+# parallélisme d'un groupe de consumers est plafonné par le nombre de
+# partitions. Avec 1 seule partition (défaut Confluent), un seul worker
+# recevrait des messages quel que soit le nombre d'unités démarrées.
+Environment=KAFKA_NUM_PARTITIONS=16
+Environment=KAFKA_LOG_RETENTION_HOURS=24
+Environment=KAFKA_MESSAGE_MAX_BYTES=10485760
+Environment=CLUSTER_ID=MkU3OEVBNTcwNTJENDM2Qg
+
+HealthCmd=kafka-topics --bootstrap-server localhost:9092 --list
+HealthInterval=30s
+HealthTimeout=10s
+HealthRetries=5
+HealthStartPeriod=30s
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=docsearch.target

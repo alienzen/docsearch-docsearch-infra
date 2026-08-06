@@ -122,7 +122,7 @@ voit pas). Pour rendre le réglage permanent, le reporter dans
 
 ```bash
 cd docsearch-infra
-./manage.sh build ui
+sudo ./manage.sh build ui
 sudo systemctl restart docsearch-ui-vue
 ```
 

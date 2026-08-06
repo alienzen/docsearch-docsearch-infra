@@ -1,0 +1,68 @@
+# crawlers/cc-publications-test.yml — Elastic Open Web Crawler
+#
+# ⚠️ FICHIER DE TEST — PAS LA CONFIG DE PRODUCTION ⚠️
+# Échelle volontairement réduite à 10 documents (max_unique_url_count),
+# à comparer aux ~38 000 fiches + ~76 000 PDF estimés pour le crawl complet
+# du site. Ne PAS utiliser tel quel pour la source "cc_publications" en
+# prod — voir "État" ci-dessous et le fichier définitif à créer une fois
+# la validation terminée : cc-publications.yml (max_unique_url_count
+# relevé, threads ajustés, schedule hebdomadaire).
+#
+# Objectif du test : valider la chaîne complète (crawl → web_indexer.py →
+# recherche) et la qualité de l'extraction PDF, pour la future source
+# "cc_publications" (rapports publiés sur ccomptes.fr, toutes institutions
+# confondues — la source officielle du site ne permet pas de filtrer par
+# institution sans passer par une URL à query string, bloquée par
+# robots.txt : voir la discussion qui a mené à ce fichier).
+#
+# État (2026-07-18) : 1er essai à 1000 docs / 3 threads interrompu — le
+# site est devenu injoignable après ~150 requêtes (impossible de dire avec
+# certitude si le crawl en était la cause). Paramètres réduits une 1ère
+# fois à 100 docs / 1 thread par précaution, puis encore à 10 docs — crawl
+# réussi sans erreur à ce rythme, mais 0 PDF atteint même avec seed_urls
+# ciblant directement 2 fiches connues (2 PDF chacune). Cause racine
+# trouvée : max_crawl_depth: 1 = "seeds uniquement, aucun lien suivi" (pas
+# "seeds + 1 saut" comme on pourrait le supposer) — confirmé par la doc
+# Elastic. Les PDF sont à 1 saut des fiches, donc il fallait
+# max_crawl_depth: 2, pas 1. Pour la config définitive : garder ce +1 en
+# tête (avec sitemap_urls, depth 2 = fiches + leurs PDF directs, sans
+# jamais s'éloigner plus loin sur le site).
+#
+# Pas de "schedule:" ici — lancé en une seule passe via la commande
+# "crawl" (pas "schedule"), voir docker-compose.yml. À supprimer (ce
+# fichier + le service docker-compose associé + les index ES de test :
+# cc_publications_test_raw et, une fois enregistrée, la source DocSearch
+# correspondante) une fois la validation terminée.
+
+output_sink: elasticsearch
+output_index: cc_publications_test_raw
+
+domains:
+  - url: https://www.ccomptes.fr
+    seed_urls:
+      - https://www.ccomptes.fr/fr/publications/commune-de-pontrieux-cotes-darmor
+      - https://www.ccomptes.fr/fr/publications/chambre-departementale-dagriculture-de-lot-et-garonne-0
+    crawl_rules:
+      - policy: allow
+        type: begins
+        pattern: /fr/publications/
+      - policy: allow
+        type: begins
+        pattern: /sites/default/files/
+      - policy: deny
+        type: begins
+        pattern: /
+
+max_crawl_depth: 2            # 1 = seeds uniquement (aucun lien suivi) ; 2 = seeds + 1 saut, nécessaire pour atteindre les PDF liés depuis chaque fiche
+max_unique_url_count: 10      # réduit de 1000 à 100 puis à 10 après le 1er essai (site devenu injoignable après ~150 requêtes)
+threads_per_crawl: 1          # réduit de 3 à 1 par politesse, même raison
+max_response_size: 20971520   # 20 Mo — le sitemap_publication fait ~13 Mo, au-delà du défaut (10 Mo) qui l'a fait échouer lors du 1er essai
+binary_content_extraction_enabled: true
+binary_content_extraction_mime_types:
+  - application/pdf
+
+user_agent: "docsearch-crawler (contact: george.trashy@gmail.com)"
+
+elasticsearch:
+  host: http://es01-dev
+  port: 9200

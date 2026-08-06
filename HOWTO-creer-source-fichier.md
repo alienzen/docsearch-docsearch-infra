@@ -49,7 +49,7 @@ sudo ./manage.sh add-file-source finance finance_docs --label Finance
 ```
 
 ```text
-Usage : ./manage.sh add-file-source <nom> <index_es> [--subfolder <sous-dossier>] [--label <libellé>]
+Usage : sudo ./manage.sh add-file-source <nom> <index_es> [--subfolder <sous-dossier>] [--label <libellé>]
 ```
 
 `--subfolder` par défaut au nom de la source (ici `finance`) — à
@@ -65,9 +65,14 @@ directement depuis la liste, sans recréer la source.
 
 ### c. API directement
 
+> Les commandes `/admin/*` ci-dessous exigent une session : ouvrir un
+> bocal à cookies une fois pour toutes, voir « S'authentifier pour les
+> commandes d'administration » dans
+> [HOWTO-commandes-utiles.md](HOWTO-commandes-utiles.md).
+
 ```bash
 curl -X POST http://localhost:8000/admin/file-sources \
-  -H "X-User: alice.admin" -H "Content-Type: application/json" \
+  -b ~/.docsearch-cookies -H "Content-Type: application/json" \
   -d '{"name": "finance", "es_index": "finance_docs", "label": "Finance"}'
 ```
 
@@ -116,7 +121,7 @@ continuer si Kafka ou aucun worker n'est détecté actif.
 ## 4. Vérifier
 
 ```bash
-./manage.sh list-file-sources
+sudo ./manage.sh list-file-sources
 curl -s http://localhost:9200/finance_docs/_count?pretty
 ```
 

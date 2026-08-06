@@ -116,7 +116,7 @@ init_run() {
     net="$(net_name)"
     [ -n "$net" ] || err "Réseau podman introuvable — la pile a-t-elle déjà démarré ? (sudo ./manage.sh start)"
     $PODMAN image exists "$IMAGE_INGESTION" \
-      || err "Image $IMAGE_INGESTION absente — la construire (./manage.sh build) ou la charger (podman load), voir HOWTO-deploiement-hors-ligne.md."
+      || err "Image $IMAGE_INGESTION absente — la construire (sudo ./manage.sh build) ou la charger (sudo podman load), voir HOWTO-deploiement-hors-ligne.md."
     $PODMAN run --rm \
         --network "$net" \
         --env-file "$ENV_FILE" \
@@ -316,7 +316,7 @@ case "${1:-help}" in
         build_one "$REPOS_DIR/docsearch-ingestion" "$IMAGE_INGESTION"
         build_one "$REPOS_DIR/docsearch-ui-vue"    "$IMAGE_UI"
         ;;
-      *) err "Usage : ./manage.sh build [all|api|ingestion|ui]" ;;
+      *) err "Usage : sudo ./manage.sh build [all|api|ingestion|ui]" ;;
     esac
     log "Terminé. Redémarrer les unités concernées : sudo ./manage.sh restart"
     ;;
@@ -340,13 +340,23 @@ case "${1:-help}" in
     systemctl restart docsearch-dev-user-proxy 2>/dev/null \
       || systemctl start docsearch-dev-user-proxy
     log "Proxy prêt : http://localhost:8090/"
+    # L'API ignore l'en-tête X-User sauf harnais explicite (elle refuse
+    # même de démarrer si API_ENV=production). Sans ce rappel, le proxy
+    # semble marcher et toutes les pages répondent 401 sans expliquer
+    # pourquoi.
+    if ! grep -qE '^TRUST_X_USER_HEADER=true' "$CONFIG_DIR/docsearch.env" 2>/dev/null; then
+      log "⚠️  TRUST_X_USER_HEADER n'est pas à true dans $CONFIG_DIR/docsearch.env :"
+      log "    l'API ignorera l'identité injectée par ce proxy et répondra 401."
+      log "    Poser TRUST_X_USER_HEADER=true et API_ENV=development, puis :"
+      log "    sudo systemctl restart docsearch-api"
+    fi
     ;;
 
   add-file-source)
     NAME="${2:-}"
     INDEX="${3:-}"
     if [ -z "$NAME" ] || [ -z "$INDEX" ]; then
-        err "Usage : ./manage.sh add-file-source <nom> <index_es> [--subfolder <sous-dossier>] [--label <libellé>]
+        err "Usage : sudo ./manage.sh add-file-source <nom> <index_es> [--subfolder <sous-dossier>] [--label <libellé>]
   Exemple : mkdir -p \${SOURCES_ROOT:-/data/docsearch-sources}/finance
             ./manage.sh add-file-source finance finance_docs --label Finance
             ./manage.sh init finance"
@@ -387,7 +397,7 @@ print(json.dumps({n: {'es_index': s.es_index, 'folder': s.folder, 'label': s.lab
   remove-file-source)
     NAME="${2:-}"
     if [ -z "$NAME" ]; then
-        err "Usage : ./manage.sh remove-file-source <nom>
+        err "Usage : sudo ./manage.sh remove-file-source <nom>
   Retire la source du registre (le watcher arrête de l'observer) — NE
   supprime PAS l'index Elasticsearch ni les documents déjà indexés.
   Utiliser ensuite 'purge-path' pour nettoyer l'existant si besoin."
@@ -411,7 +421,7 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
     FIELDS_JSON="${8:-}"
     if [ -z "$NAME" ] || [ -z "$DB_TYPE" ] || [ -z "$CONN_REF" ] || [ -z "$QUERY" ] \
        || [ -z "$ID_COLUMN" ] || [ -z "$ES_INDEX_ARG" ] || [ -z "$FIELDS_JSON" ]; then
-        err "Usage : ./manage.sh add-sql-source <nom> <postgresql|mysql> <connection_ref> <requête_sql> <id_column> <index_es> <fields_json> [--poll-interval secondes] [--label <libellé>]
+        err "Usage : sudo ./manage.sh add-sql-source <nom> <postgresql|mysql> <connection_ref> <requête_sql> <id_column> <index_es> <fields_json> [--poll-interval secondes] [--label <libellé>]
 
   connection_ref : NOM d'une variable d'environnement contenant le DSN
                     complet (définie dans .env), JAMAIS le DSN lui-même
@@ -493,7 +503,7 @@ print(json.dumps({n: {
   remove-sql-source)
     NAME="${2:-}"
     if [ -z "$NAME" ]; then
-        err "Usage : ./manage.sh remove-sql-source <nom>
+        err "Usage : sudo ./manage.sh remove-sql-source <nom>
   Retire la source du registre (sql-worker arrête de l'interroger) — NE
   supprime PAS l'index Elasticsearch ni les documents déjà indexés."
     fi
@@ -509,7 +519,7 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
   run-sql-source)
     NAME="${2:-}"
     if [ -z "$NAME" ]; then
-        err "Usage : ./manage.sh run-sql-source <nom>
+        err "Usage : sudo ./manage.sh run-sql-source <nom>
   Déclenche immédiatement un passage complet pour cette source (upsert +
   réconciliation), sans attendre poll_interval_seconds — utile pour
   tester une source qui vient d'être ajoutée."
@@ -526,7 +536,7 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
     CRAWL_INDEX="${3:-}"
     ES_INDEX_ARG="${4:-}"
     if [ -z "$NAME" ] || [ -z "$CRAWL_INDEX" ] || [ -z "$ES_INDEX_ARG" ]; then
-        err "Usage : ./manage.sh add-web-source <nom> <crawl_index> <index_es> [--poll-interval secondes] [--private] [--label <libellé>]
+        err "Usage : sudo ./manage.sh add-web-source <nom> <crawl_index> <index_es> [--poll-interval secondes] [--private] [--label <libellé>]
 
   crawl_index : index ES intermédiaire dans lequel Elastic Open Web Crawler
                 écrit (son 'output_index' à lui, schéma brut du crawler :
@@ -594,7 +604,7 @@ print(json.dumps({n: {
   remove-web-source)
     NAME="${2:-}"
     if [ -z "$NAME" ]; then
-        err "Usage : ./manage.sh remove-web-source <nom>
+        err "Usage : sudo ./manage.sh remove-web-source <nom>
   Retire la source du registre (web-worker arrête de la synchroniser) — NE
   supprime PAS les index Elasticsearch (crawl_index ni es_index) ni les
   documents déjà indexés."
@@ -611,7 +621,7 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
   run-web-source)
     NAME="${2:-}"
     if [ -z "$NAME" ]; then
-        err "Usage : ./manage.sh run-web-source <nom>
+        err "Usage : sudo ./manage.sh run-web-source <nom>
   Déclenche immédiatement un passage complet pour cette source (upsert +
   réconciliation depuis crawl_index), sans attendre poll_interval_seconds —
   utile pour tester une source qui vient d'être ajoutée, une fois qu'Elastic
@@ -625,7 +635,7 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
     KEY="${2:-}"
     VALUE="${3:-}"
     if [ -z "$KEY" ] || [ -z "$VALUE" ]; then
-        err "Usage : ./manage.sh set-config <clé> <valeur>
+        err "Usage : sudo ./manage.sh set-config <clé> <valeur>
   Clés disponibles : archive_max_files, archive_max_total_size_mb,
                       archive_max_depth, worker_batch_size,
                       worker_flush_interval, watcher_poll_interval,
@@ -654,7 +664,7 @@ print(json.dumps(get_runtime_config(), indent=2, ensure_ascii=False))
     PATTERN="${2:-}"
     SOURCE="${3:-documents}"
     if [ -z "$PATTERN" ]; then
-        err "Usage : ./manage.sh exclude-path <motif> [source]
+        err "Usage : sudo ./manage.sh exclude-path <motif> [source]
   Exemples : ./manage.sh exclude-path finance/confidentiel
              ./manage.sh exclude-path '*/tmp' finance
              ./manage.sh exclude-path '*.cache'"
@@ -672,7 +682,7 @@ print(json.dumps(add_excluded('$PATTERN', '$SOURCE'), indent=2, ensure_ascii=Fal
     PATTERN="${2:-}"
     SOURCE="${3:-documents}"
     if [ -z "$PATTERN" ]; then
-        err "Usage : ./manage.sh include-path <motif> [source]
+        err "Usage : sudo ./manage.sh include-path <motif> [source]
   Bascule en liste blanche : si au moins un motif est inclus, SEULS
   les chemins correspondants sont indexés (l'exclusion reste prioritaire)."
     fi
@@ -688,7 +698,7 @@ print(json.dumps(add_included('$PATTERN', '$SOURCE'), indent=2, ensure_ascii=Fal
     PATTERN="${2:-}"
     SOURCE="${3:-documents}"
     if [ -z "$PATTERN" ]; then
-        err "Usage : ./manage.sh remove-path-filter <motif> [source]"
+        err "Usage : sudo ./manage.sh remove-path-filter <motif> [source]"
     fi
     init_run python3 -c "
 from path_filter import remove_filter
@@ -711,7 +721,7 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
     PATTERN="${2:-}"
     SOURCE="${3:-documents}"
     if [ -z "$PATTERN" ]; then
-        err "Usage : ./manage.sh purge-path <motif> [source]
+        err "Usage : sudo ./manage.sh purge-path <motif> [source]
   Supprime de l'INDEX (pas du disque) les documents déjà indexés dont
   le chemin correspond au motif — même syntaxe glob que exclude-path.
   Utile après un exclude-path : ce dernier n'agit que sur les futurs
@@ -748,7 +758,7 @@ print(f'{n} document(s) supprimé(s) de l\'index.')
   set-filetype)
     EXT="${2:-}"
     if [ -z "$EXT" ]; then
-        err "Usage : ./manage.sh set-filetype <extension> [--enabled true|false] [--max-size Mo] [--source <nom>]
+        err "Usage : sudo ./manage.sh set-filetype <extension> [--enabled true|false] [--max-size Mo] [--source <nom>]
   Sans --source, s'applique à la source par défaut ('documents') — chaque
   source a sa propre configuration de types de fichiers, indépendante."
     fi
@@ -830,7 +840,7 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
     echo "    status          État des unités + stats Elasticsearch"
     echo "    logs [service]  Journaux en temps réel (journalctl) — 'logs worker'"
     echo "                    suit toutes les unités worker à la fois"
-    echo "    build [cible]   Construire les images (all|api|ingestion|ui) — machine CONNECTÉE"
+    echo "    build [cible]   Construire les images (all|api|ingestion|ui) — machine CONNECTÉE (sudo)"
     echo "    dev-user <login>  Régler l'utilisateur simulé du proxy de développement (sudo)"
     echo "    init [source] [sous-dossier]"
     echo "                    Indexation d'une source (défaut : 'documents'), complète"

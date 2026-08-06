@@ -16,10 +16,18 @@ réseau : ces étapes se font ailleurs, sur une machine de préparation.
 | **Exécution** de l'application | **Aucun** | Voir ci-dessous |
 | **Construction** des images DocSearch | Requis | `apt-get`, `pip install`, `npm ci` dans les Dockerfiles |
 | **Images tierces** (ES, Kibana, Kafka, Tika, Redis, Nginx, crawler) | Requis | Tirées depuis `docker.elastic.co`, Docker Hub |
-| **Paquets podman** (podman, netavark, aardvark-dns) | Requis | Dépôts Debian + backports |
+| **Paquets podman** (podman, netavark, aardvark-dns) | Requis | Dépôts Debian 13 stables |
 | **Récupération du code** | Requis | `git clone` / `git pull` depuis le dépôt d'origine |
 
 À l'exécution, rien ne sort du réseau :
+
+- **Authentification** — l'annuaire LDAP/AD et, si la connexion
+  automatique est activée, le KDC Kerberos sont des services **de
+  l'intranet** : aucun appel sortant. Les jetons de session sont signés
+  localement par une clé RS256 générée sur place, il n'y a pas d'autorité
+  externe à joindre. Côté **construction**, en revanche, l'image de l'API
+  compile `gssapi` contre `libkrb5-dev` : ces paquets s'installent (et se
+  purgent) pendant le build, sur la machine de préparation.
 
 - **Interfaces web** — aucun CDN. Les polices Marianne sont servies
   localement (`docsearch-ui/public/fonts/`), les logos sont des SVG
@@ -111,7 +119,7 @@ for img in \
   docker.io/apache/tika:3.3.1.0-full \
   docker.io/library/redis:7.2-alpine \
   docker.io/library/nginx:1.27-alpine ; do
-  podman pull "$img"
+  sudo podman pull "$img"
 done
 ```
 
@@ -119,9 +127,27 @@ done
 
 ```bash
 cd ~/docsearch/docsearch-infra
-./manage.sh build all      # api + ingestion + ui-vue
-podman images | grep docsearch
+sudo ./manage.sh build all      # api + ingestion + ui-vue
+sudo podman images | grep docsearch
 ```
+
+⚠️ **Tout ce chapitre travaille dans le magasin rootful**, `sudo` compris
+sur `podman pull` et `podman save` : les deux magasins sont étanches, et
+un export ne trouve que ce qui a été tiré ou construit dans le sien.
+Mélanger les deux donne un `image not known` à l'export, ou une archive
+silencieusement incomplète.
+
+C'est la même règle que sur les machines cibles (`sudo podman load`,
+§6), appliquée ici par cohérence : un seul magasin, celui de root, du
+début à la fin de la chaîne. Voir
+[HOWTO-commandes-utiles.md](HOWTO-commandes-utiles.md), section
+« Construire en rootless, exécuter en rootful ».
+
+ℹ️ Sur la machine de préparation, les images ne sont jamais exécutées —
+elles sont construites puis exportées. Le magasin de root y sert donc
+uniquement d'espace de travail, et peut être purgé après transfert
+(`sudo podman image prune -f`) : sur une machine qui produit plusieurs
+Go d'archives, ce n'est pas anecdotique.
 
 ### 4.4 Exporter une archive par rôle
 
@@ -132,22 +158,22 @@ deux à trois (comptez ~2,5 Go pour Elasticsearch, ~2,5 Go pour Kibana,
 ```bash
 mkdir -p ~/docsearch-transfert && cd ~/docsearch-transfert
 
-podman save docker.elastic.co/elasticsearch/elasticsearch:9.4.3 \
+sudo podman save docker.elastic.co/elasticsearch/elasticsearch:9.4.3 \
   | gzip > es-data.tar.gz
 
-podman save docker.elastic.co/elasticsearch/elasticsearch:9.4.3 \
+sudo podman save docker.elastic.co/elasticsearch/elasticsearch:9.4.3 \
              docker.elastic.co/kibana/kibana:9.4.3 \
   | gzip > es-voting.tar.gz
 
-podman save docker.io/confluentinc/cp-kafka:8.3.0 | gzip > kafka.tar.gz
+sudo podman save docker.io/confluentinc/cp-kafka:8.3.0 | gzip > kafka.tar.gz
 
-podman save docker.io/library/redis:7.2-alpine \
+sudo podman save docker.io/library/redis:7.2-alpine \
              docker.io/library/nginx:1.27-alpine \
              localhost/docsearch/api:latest \
              localhost/docsearch/ui-vue:latest \
   | gzip > frontend.tar.gz
 
-podman save docker.io/apache/tika:3.3.1.0-full \
+sudo podman save docker.io/apache/tika:3.3.1.0-full \
              localhost/docsearch/ingestion:latest \
   | gzip > ingest.tar.gz
 
@@ -157,13 +183,17 @@ sha256sum *.tar.gz > SHA256SUMS
 ### 4.5 Récupérer les paquets podman
 
 Les serveurs isolés ne peuvent pas non plus faire `apt install`. Sur une
-Debian 12 de préparation, avec les backports activés :
+Debian 13 de préparation — **de même version que les machines cibles**,
+sans quoi les dépendances téléchargées ne s'installeront pas :
 
 ```bash
-sudo apt-get install -y --download-only -t bookworm-backports \
-     podman netavark aardvark-dns
+sudo apt-get install -y --download-only podman netavark aardvark-dns
 cp /var/cache/apt/archives/*.deb ~/docsearch-transfert/paquets/
 ```
+
+Plus de `-t bookworm-backports` : Debian 13 livre podman 5.4.2 dans ses
+dépôts stables. Le drapeau était indispensable sur Debian 12, dont la
+version stable (4.3) passait sous le seuil.
 
 ⚠️ Vérifier la version obtenue (`podman --version`) : Quadlet exige au
 moins **4.4**, et `install-units.sh` refuse de continuer en dessous.
@@ -201,8 +231,33 @@ cd ~/docsearch/docsearch-infra
 sudo ./quadlet/install-units.sh frontend
 sudo nano /etc/docsearch/docsearch.env   # renseigner les IP réelles
 
+# 3bis. frontend UNIQUEMENT — clés de signature des sessions.
+# Aucune sortie réseau : la paire RSA est générée sur place, dans l'image
+# déjà chargée. Sans elle, l'application démarre mais /auth/login répond
+# 503 et personne ne peut se connecter.
+sudo install -d -o 1000 -g 1000 -m 700 /etc/docsearch/jwt
+sudo podman run --rm -v /etc/docsearch/jwt:/etc/docsearch/jwt:Z \
+     localhost/docsearch/api:latest python scripts/generer-cles.py
+# reporter les 3 lignes JWT_* dans /etc/docsearch/docsearch.env
+
 # 4. démarrage
 sudo systemctl start docsearch.target
+```
+
+⚠️ Un conteneur **jetable**, et non `podman exec` dans le service : l'unité
+monte `/etc/docsearch/jwt` en lecture seule. Et `-o 1000` donne le
+répertoire à l'UID de l'utilisateur *dans* le conteneur — appartenant à
+root, les clés seraient générées puis illisibles par le service.
+
+Prévoir aussi, sur le frontend, un **compte de secours local** avant la
+première panne d'annuaire : sans lui, un annuaire injoignable rend
+DocSearch totalement inaccessible, administration comprise. Il porte ses
+propres groupes, ce qui est justement ce qui le rend utilisable quand
+l'annuaire ne répond plus.
+
+```bash
+sudo podman exec -it docsearch-api python scripts/gerer-comptes-locaux.py \
+     creer secours.admin --groupes docsearch-users,docsearch-admins
 ```
 
 ⚠️ Les images doivent être chargées **en rootful** (`sudo podman load`) :
@@ -238,8 +293,8 @@ systemctl list-units 'docsearch-*'
 ```bash
 # 1. Sur la machine de préparation
 cd ~/docsearch/docsearch-api && git pull
-cd ~/docsearch/docsearch-infra && ./manage.sh build api
-podman save localhost/docsearch/api:latest | gzip > ~/docsearch-transfert/api.tar.gz
+cd ~/docsearch/docsearch-infra && sudo ./manage.sh build api
+sudo podman save localhost/docsearch/api:latest | gzip > ~/docsearch-transfert/api.tar.gz
 
 # 2. Transfert de api.tar.gz + du code à jour vers frontend
 

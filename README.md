@@ -46,7 +46,7 @@ git clone <url>/docsearch-docs.git
 cd docsearch-infra
 chmod +x manage.sh quadlet/install-units.sh
 
-./manage.sh build all                    # construit les images (machine CONNECTÉE)
+sudo ./manage.sh build all               # construit les images (machine CONNECTÉE)
 sudo ./quadlet/install-units.sh dev      # installe les unités systemd
 sudo nano /etc/docsearch/docsearch.env   # adapter SOURCES_HOST_PATH, LDAP...
 
@@ -97,7 +97,7 @@ sudo ./manage.sh stop
 sudo ./manage.sh init            # Indexation initiale (dossier complet)
 sudo ./manage.sh init finance    # Réindexer uniquement la source "finance"
 sudo ./manage.sh scale-workers N
-./manage.sh build [all|api|ingestion|ui]
+sudo ./manage.sh build [all|api|ingestion|ui]
 ./manage.sh backup
 sudo ./manage.sh reset      # ⚠️ supprime toutes les données
 ```
@@ -126,18 +126,25 @@ unités qui l'utilisent.
 
 ```bash
 # Après une modification dans docsearch-ingestion :
-./manage.sh build ingestion
+sudo ./manage.sh build ingestion
 sudo systemctl restart 'docsearch-worker-*' docsearch-watcher docsearch-sql-worker docsearch-web-worker
 
 # Après une modification dans docsearch-api :
 # (docsearch-api ET alert-worker partagent l'image)
-./manage.sh build api
+sudo ./manage.sh build api
 sudo systemctl restart docsearch-api docsearch-alert-worker
 
 # Après une modification dans docsearch-ui-vue :
-./manage.sh build ui
+sudo ./manage.sh build ui
 sudo systemctl restart docsearch-ui-vue
 ```
+
+⚠️ Le `sudo` de la construction est indispensable : les unités systemd
+tournent en root et ne voient pas les images d'un magasin rootless. Sans
+lui, l'unité redémarre sans erreur et continue de servir l'image
+précédente. Détail et procédure de rattrapage dans
+[HOWTO-commandes-utiles.md](HOWTO-commandes-utiles.md), section
+« Construire en rootless, exécuter en rootful ».
 
 ⚠️ Le code est copié DANS l'image : modifier un fichier sur disque n'a
 aucun effet tant que l'image n'est pas reconstruite **et** l'unité
@@ -181,11 +188,13 @@ Permet de consulter l'état des composants, ajuster la configuration
 déclencher un scan ou une purge — sans jamais toucher aux conteneurs.
 Voir le README de `docsearch-api` pour le détail des routes `/admin/*`.
 
-Sans SSO configuré (dev/test), voir
-[HOWTO-simuler-utilisateur.md](HOWTO-simuler-utilisateur.md) pour
-simuler un utilisateur (et donc accéder à `/admin.html`). Pour la
-syntaxe des motifs glob des filtres de sous-dossiers (liste noire/liste
-blanche), voir
+L'accès à `/admin.html` suppose une session **et** l'appartenance au
+groupe `ADMIN_GROUP` : l'application redirige vers `/connexion` à défaut
+de la première, et refuse en 403 à défaut de la seconde. Voir
+[HOWTO-simuler-utilisateur.md](HOWTO-simuler-utilisateur.md) pour se
+connecter, pour les comptes de secours quand l'annuaire est en panne, et
+pour les harnais de recette. Pour la syntaxe des motifs glob des filtres
+de sous-dossiers (liste noire/liste blanche), voir
 [HOWTO-filtres-sous-dossiers.md](HOWTO-filtres-sous-dossiers.md).
 
 ## Nom de l'index Elasticsearch
@@ -228,5 +237,5 @@ Elasticsearch 9.4.3 · Apache Tika 3.3.1.0 · Kafka 8.3 (KRaft, sans
 Zookeeper) · Redis 7.2 · Nginx 1.27 · Python 3.12 · Elastic Open Web
 Crawler 1.0.0.
 
-Voir `guide_install_virtualbox.docx` dans `docsearch-docs` pour une
+Voir `guide_install_virtualbox.md` dans `docsearch-docs` pour une
 installation pas à pas sur VM VirtualBox.

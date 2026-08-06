@@ -30,9 +30,14 @@ effet (nouvelle variable dans `/etc/docsearch/docsearch.env` = conteneur
 
 ### Méthode 2 — DSN chiffré via le panneau admin (dynamique, sans redémarrage)
 
+> Les commandes `/admin/*` ci-dessous exigent une session : ouvrir un
+> bocal à cookies une fois pour toutes, voir « S'authentifier pour les
+> commandes d'administration » dans
+> [HOWTO-commandes-utiles.md](HOWTO-commandes-utiles.md).
+
 ```bash
 curl -X POST http://localhost:8000/admin/sql-dsns \
-  -H "X-User: alice.admin" -H "Content-Type: application/json" \
+  -b ~/.docsearch-cookies -H "Content-Type: application/json" \
   -d '{"name": "CLIENTS_PG_DSN", "dsn": "postgresql+psycopg2://user:motdepasse@host:5432/dbname"}'
 ```
 
@@ -107,7 +112,7 @@ sudo ./manage.sh add-sql-source clients postgresql CLIENTS_DB_DSN \
 ```
 
 ```text
-Usage : ./manage.sh add-sql-source <nom> <postgresql|mysql> <connection_ref> <requête_sql> <id_column> <index_es> <fields_json> [--poll-interval secondes] [--label <libellé>]
+Usage : sudo ./manage.sh add-sql-source <nom> <postgresql|mysql> <connection_ref> <requête_sql> <id_column> <index_es> <fields_json> [--poll-interval secondes] [--label <libellé>]
 ```
 
 ### b. Panneau admin "Sources SQL" (`admin.html`)
@@ -124,7 +129,7 @@ modification d'une source existante.
 
 ```bash
 curl -X POST http://localhost:8000/admin/sql-sources \
-  -H "X-User: alice.admin" -H "Content-Type: application/json" \
+  -b ~/.docsearch-cookies -H "Content-Type: application/json" \
   -d '{
     "name": "clients", "db_type": "postgresql", "connection_ref": "CLIENTS_DB_DSN",
     "query": "SELECT id, nom, email, actif FROM clients WHERE actif = true",
@@ -189,7 +194,7 @@ ne purge donc jamais tout un index d'un coup.
 ## 5. Vérifier
 
 ```bash
-./manage.sh list-sql-sources
+sudo ./manage.sh list-sql-sources
 curl -s http://localhost:9200/clients_sql/_count?pretty
 ```
 
@@ -199,7 +204,7 @@ sources **fichiers** (`_sources_status()` ne boucle que sur
 SQL, utiliser `list-sql-sources` ci-dessus ou la vue unifiée :
 
 ```bash
-curl -H "X-User: alice.admin" http://localhost:8000/admin/all-sources | jq
+curl -b ~/.docsearch-cookies http://localhost:8000/admin/all-sources | jq
 ```
 
 (fusionne fichier/SQL/web avec compte de documents + taille sur disque
@@ -233,7 +238,7 @@ Si le DSN dynamique (méthode 2) associé n'est plus utilisé par aucune
 autre source, le retirer aussi :
 
 ```bash
-curl -X DELETE http://localhost:8000/admin/sql-dsns/CLIENTS_PG_DSN -H "X-User: alice.admin"
+curl -X DELETE http://localhost:8000/admin/sql-dsns/CLIENTS_PG_DSN -b ~/.docsearch-cookies
 ```
 
 ⚠️ Ni `remove-sql-source` ni `DELETE /admin/sql-dsns/{name}` ne

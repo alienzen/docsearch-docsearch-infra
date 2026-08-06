@@ -178,7 +178,7 @@ sudo ./manage.sh add-web-source mon_site mon_site_raw mon_site --poll-interval 3
 ```
 
 ```text
-Usage : ./manage.sh add-web-source <nom> <crawl_index> <index_es> [--poll-interval secondes] [--private] [--label <libellé>]
+Usage : sudo ./manage.sh add-web-source <nom> <crawl_index> <index_es> [--poll-interval secondes] [--private] [--label <libellé>]
 ```
 
 - `<crawl_index>` doit être **identique** à `output_index` dans le YAML
@@ -199,9 +199,14 @@ Retirer.
 
 ### c. API directement
 
+> Les commandes `/admin/*` ci-dessous exigent une session : ouvrir un
+> bocal à cookies une fois pour toutes, voir « S'authentifier pour les
+> commandes d'administration » dans
+> [HOWTO-commandes-utiles.md](HOWTO-commandes-utiles.md).
+
 ```bash
 curl -X POST http://localhost:8000/admin/web-sources \
-  -H "X-User: alice.admin" -H "Content-Type: application/json" \
+  -b ~/.docsearch-cookies -H "Content-Type: application/json" \
   -d '{
     "name": "mon_site", "crawl_index": "mon_site_raw", "es_index": "mon_site",
     "acl_public": true, "poll_interval_seconds": 3600, "label": "Mon site"
@@ -261,7 +266,7 @@ lecture de `crawl_index` :
 Vérifier :
 
 ```bash
-./manage.sh list-web-sources
+sudo ./manage.sh list-web-sources
 curl -s http://localhost:9200/mon_site/_count?pretty
 ```
 
@@ -269,7 +274,7 @@ Ou la vue unifiée (fusionne fichier/SQL/web, avec compte de documents et
 taille sur disque) :
 
 ```bash
-curl -H "X-User: alice.admin" http://localhost:8000/admin/all-sources | jq
+curl -b ~/.docsearch-cookies http://localhost:8000/admin/all-sources | jq
 ```
 
 ⚠️ `./manage.sh status` / `GET /admin/status` ne couvrent que les

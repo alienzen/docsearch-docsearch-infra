@@ -15,6 +15,12 @@
 # ⚠️  Aucune authentification réelle : quiconque atteint ce port navigue
 # avec l'identité TEST_X_USER. Réservé au réseau de test isolé
 # (192.168.56.0/24), jamais à exposer au-delà.
+#
+# ⚠️  NE SUFFIT PLUS À LUI SEUL depuis la refonte de l'authentification :
+# l'API ignore l'en-tête X-User sauf si elle tourne avec
+# TRUST_X_USER_HEADER=true, et elle REFUSE DE DÉMARRER avec ce drapeau si
+# API_ENV=production. Sans cela, ce proxy semble fonctionner et toutes les
+# pages répondent 401. Voir HOWTO-simuler-utilisateur.md.
 
 worker_processes 1;
 events { worker_connections 512; }

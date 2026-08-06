@@ -24,6 +24,35 @@ En cas de panne au démarrage, voir la section **Dépannage** de
 réellement rencontrées (sous-réseau occupé, image absente du magasin de
 root, unités abandonnées par systemd, configuration non prise en compte).
 
+## S'authentifier pour les commandes d'administration
+
+**Depuis la refonte de l'authentification (2026-08-06), un en-tête
+`X-User` ne vaut plus identité** : l'API vérifie un jeton de session
+qu'elle a elle-même signé. Les anciens exemples
+`curl -H "X-User: alice.admin" …` répondent désormais `401`.
+
+Une fois par session de travail, ouvrir un bocal à cookies :
+
+```bash
+curl -c ~/.docsearch-cookies -X POST http://localhost:8000/auth/login \
+     -H "Content-Type: application/json" \
+     -d '{"identifiant":"alice.admin","mot_de_passe":"…"}'
+```
+
+Toutes les commandes `/admin/*` de ce document le rejouent ensuite avec
+`-b ~/.docsearch-cookies`. Le jeton d'accès vit 15 minutes ; au-delà,
+`curl -b ~/.docsearch-cookies -X POST http://localhost:8000/auth/refresh`
+le renouvelle, ou il suffit de refaire la connexion ci-dessus.
+
+⚠️ Ce fichier contient un jeton de session valide : `chmod 600`, et le
+supprimer quand on a fini. `curl -b … -X POST …/auth/logout` le révoque
+côté serveur, ce qui est plus sûr que de simplement effacer le fichier.
+
+Codes de retour à savoir lire : `401` pas (ou plus) de session, `403`
+authentifié mais hors du groupe requis, `503` annuaire, Redis ou clés de
+signature indisponibles — jamais un problème d'identifiants. Voir
+[HOWTO-simuler-utilisateur.md](HOWTO-simuler-utilisateur.md).
+
 ## Démarrer / arrêter / redémarrer
 
 ```bash
@@ -71,7 +100,7 @@ indexés (alias `ES_SEARCH_ALIAS`, toutes sources confondues).
 ### Vue détaillée (composant par composant)
 
 ```bash
-curl -H "X-User: alice.admin" http://localhost:8000/admin/status | jq
+curl -b ~/.docsearch-cookies http://localhost:8000/admin/status | jq
 ```
 
 Correspond à `cluster_status.get_full_status()` — vérifie, sans accès à
@@ -111,6 +140,125 @@ Deux services ont un healthcheck HTTP natif consultable directement :
 curl -sf http://localhost:9200/_cluster/health?pretty   # es01-dev
 curl -sf http://localhost:8000/health                   # api
 ```
+
+### Espace disque — première chose à regarder si le cluster est rouge
+
+Elasticsearch refuse d'allouer des shards bien avant que le disque soit
+plein. Trois seuils par défaut, tous exprimés en % du système de
+fichiers qui porte le volume `es01-data` :
+
+| Seuil | Défaut | Effet |
+|---|---|---|
+| `low` | 85 % | plus de nouveau shard sur le nœud |
+| `high` | 90 % | shards existants non alloués → **cluster rouge** |
+| `flood_stage` | 95 % | **tous les index passent en lecture seule** |
+
+Le contrôle de base :
+
+```bash
+df -h /
+```
+
+Ce qu'en voit Elasticsearch, qui est ce qui compte réellement :
+
+```bash
+curl -s 'http://localhost:9200/_cat/allocation?v&h=shards,disk.indices,disk.used,disk.avail,disk.total,disk.percent'
+```
+
+⚠️ **Le franchissement de `flood_stage` est silencieux dans
+`_cluster/health`** : le statut peut être `yellow` — voire `green` —
+alors que plus aucune écriture ne passe (ni indexation, ni `search_logs`,
+ni `admin_audit_log`). Le seul témoin est le blocage posé sur les index :
+
+```bash
+curl -s 'http://localhost:9200/_all/_settings/index.blocks.*?flat_settings=true' | jq
+```
+
+Une réponse `{}` est saine. Tout index listé avec
+`index.blocks.read_only_allow_delete: true` est en lecture seule.
+
+Pour savoir **pourquoi** un shard précis n'est pas alloué (le décideur
+fautif est nommé explicitement, `disk_threshold` en cas de saturation) :
+
+```bash
+curl -s -XPOST 'http://localhost:9200/_cluster/allocation/explain' -H 'Content-Type: application/json' -d '{"index":"suggestions","shard":0,"primary":true}' | jq '.node_allocation_decisions[].deciders'
+```
+
+Sans corps de requête, l'API répond sur un shard non alloué **choisi au
+hasard** : pratique pour un premier coup d'œil, trompeur pour conclure.
+
+Le champ `unassigned_info.reason` distingue deux situations très
+différentes : `INDEX_CREATED` = index neuf, jamais peuplé, rien à
+récupérer ; `CLUSTER_RECOVERED` = l'index préexistait et ses données sont
+sur disque, simplement pas rouvertes.
+
+#### Où part la place
+
+Le volume Elasticsearch est rarement le coupable — `disk.indices`
+ci-dessus donne son poids réel. Les deux magasins de conteneurs sont les
+suspects habituels, et ils sont **séparés** (voir l'avertissement rootful
+plus haut) :
+
+```bash
+sudo podman system df    # magasin de root : images des unités, volumes
+podman system df         # magasin rootless : couches de build accumulées
+```
+
+Reconstruire une image ne remplace pas l'ancienne, elle devient une
+couche sans étiquette. Quelques dizaines de builds suffisent à occuper
+plusieurs Go. Purge des seules images orphelines :
+
+```bash
+podman image prune -f
+```
+
+⚠️ **Ne pas utiliser `-a`** (`podman image prune -af`) : la variante
+supprime aussi les images *étiquetées* sans conteneur associé — dont
+`localhost/docsearch/ui-vue:latest` fraîchement construite en rootless et
+pas encore transférée vers le magasin de root, où elle n'a par
+construction aucun conteneur.
+
+Autres réserves, par ordre de rendement décroissant :
+
+```bash
+rm -rf ~/.cache/pip                          # se reconstitue au prochain pip install
+npm cache clean --force                      # idem côté npm
+sudo journalctl --vacuum-size=200M           # journaux systemd
+sudo podman volume ls                        # volumes orphelins de piles de test
+```
+
+#### Retour à la normale
+
+Aucune commande de reprise n'est nécessaire : une fois repassé sous le
+seuil `high`, Elasticsearch réalloue les shards **et lève lui-même** les
+blocages `read_only_allow_delete` (comportement natif depuis la 7.4),
+en une trentaine de secondes — le nœud rafraîchit ses statistiques disque
+à intervalle `cluster.info.update.interval`, 30 s par défaut.
+
+```bash
+curl -s 'http://localhost:9200/_cluster/health?wait_for_status=yellow&timeout=60s&pretty'
+```
+
+Si un blocage persiste alors que le disque est redescendu, c'est qu'il a
+été posé à la main et il faut le retirer explicitement :
+
+```bash
+curl -s -XPUT 'http://localhost:9200/_all/_settings' -H 'Content-Type: application/json' -d '{"index.blocks.read_only_allow_delete": null}'
+```
+
+⚠️ En mono-hôte (`discovery.type=single-node`), les répliques ne peuvent
+**jamais** être allouées : un cluster à `number_of_replicas: 1` plafonne
+à `yellow`, ce qui masque les vrais incidents. Les index de dev sont
+passés à `0` réplique pour que `green` soit l'état nominal :
+
+```bash
+curl -s -XPUT 'http://localhost:9200/<index>/_settings' -H 'Content-Type: application/json' -d '{"index":{"number_of_replicas":0}}'
+```
+
+À ne pas reporter tel quel en production multi-nœuds, où les répliques
+sont légitimes. Ne pas viser `_all` non plus : les flux système
+(`.ds-ilm-history-*`, `.ds-.logs-elasticsearch.deprecation-*`) sont déjà
+à 0 et n'ont pas à être touchés.
 
 ### Vérifier dans le navigateur
 
@@ -245,8 +393,65 @@ est copié DANS l'image à la construction (pas de bind-mount, pas de
 l'image n'est pas reconstruite et l'unité redémarrée :
 
 ```bash
-./manage.sh build ingestion              # ou : api, ui, all
+sudo ./manage.sh build ingestion         # ou : api, ui, all
 sudo systemctl restart docsearch.target  # recrée les conteneurs sur la nouvelle image
+```
+
+### Construire en rootless, exécuter en rootful
+
+⚠️ **Le `sudo` de la commande de construction n'est pas décoratif.**
+Podman sépare le magasin d'images de root de celui de chaque
+utilisateur. Les unités systemd tournent en **root** : une image
+construite sans `sudo` atterrit dans `~/.local/share/containers` et leur
+reste invisible.
+
+`manage.sh` détecte le cas et avertit (voir `manage.sh:294`), mais
+n'interrompt pas la construction — l'avertissement passe facilement
+inaperçu au milieu des journaux de build.
+
+Deux symptômes, dont un franchement traître :
+
+- **Première construction** : l'unité refuse de démarrer sur un
+  `image not known`, alors que `podman images` affiche bien l'image.
+  Déroutant, mais explicite.
+- **Reconstruction** : une version plus ancienne existe déjà chez root.
+  L'unité démarre sans erreur et continue de servir l'image périmée. Le
+  correctif semble simplement « ne pas avoir marché », et on va chercher
+  le bug dans le code.
+
+Distinguer les deux magasins :
+
+```bash
+podman images | grep docsearch        # magasin de l'utilisateur
+sudo podman images | grep docsearch   # magasin de root — celui qui compte
+```
+
+Si une image a déjà été construite en rootless, inutile de tout
+reconstruire, il suffit de la transférer :
+
+```bash
+podman save localhost/docsearch/ui-vue:latest | sudo podman load
+sudo systemctl restart docsearch-ui-vue
+```
+
+Plusieurs images en une passe, avec `-m` :
+
+```bash
+podman save -m localhost/docsearch/api:latest localhost/docsearch/ingestion:latest localhost/docsearch/ui-vue:latest | sudo podman load
+```
+
+⚠️ Le transfert **duplique** les couches : elles occupent alors les deux
+magasins. Sur une VM à l'espace disque tendu, préférer `sudo ./manage.sh
+build` et purger le magasin rootless (voir « Où part la place » plus
+haut).
+
+⚠️ `sudo` réinitialise l'environnement : `APP_UID=$(id -u) sudo
+./manage.sh build all` ne transmet **rien**, et la construction retombe
+sur la valeur par défaut `1000`. La variable doit être placée après
+`sudo` :
+
+```bash
+sudo APP_UID=$(id -u) ./manage.sh build all
 ```
 
 ⚠️ Une machine **isolée du réseau** ne peut rien construire (`apt-get`,
@@ -262,7 +467,7 @@ d'administration de `manage.sh`. Il reste à redémarrer les unités qui
 l'utilisent :
 
 ```bash
-./manage.sh build ingestion
+sudo ./manage.sh build ingestion
 sudo systemctl restart 'docsearch-worker-*' docsearch-watcher docsearch-sql-worker docsearch-web-worker
 ```
 
@@ -328,4 +533,5 @@ sudo ./manage.sh scale-workers 12   # recommandé à fort volume (4 unités par 
 - [HOWTO-filtres-sous-dossiers.md](HOWTO-filtres-sous-dossiers.md) —
   motifs glob d'inclusion/exclusion par source
 - [HOWTO-simuler-utilisateur.md](HOWTO-simuler-utilisateur.md) —
-  fournir `X-User` sans SSO (nécessaire pour `/admin/*`)
+  se connecter, et simuler un utilisateur en recette (nécessaire pour
+  toute commande `/admin/*`)

@@ -135,18 +135,45 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
 - **Personnalisation** : bloc-marque, titre et sous-titre d'en-tête,
   favicon, description et mention de bas de page, chemin affiché par le
   bouton « Copier le chemin ».
-- **Mode test sans authentification** (`ADMIN_AUTH_DISABLED`), délibérément
-  bruyant (bannière + log à chaque requête) pour ne jamais être oublié
-  en production.
+- **Écran de connexion** aux couleurs de l'installation (même bloc-marque,
+  même titre, même pied de page que le reste), avec bascule « Afficher »
+  du mot de passe et bouton de rattrapage de la connexion automatique.
+- **Contournements de recette** (`ADMIN_AUTH_DISABLED`, `DEV_USER`,
+  `TRUST_X_USER_HEADER`, `KERBEROS_DEV_PRINCIPAL`) : l'API **refuse de
+  démarrer** si l'un d'eux est armé avec `API_ENV=production`, plutôt que
+  de l'ignorer. Hors production, encadré au démarrage et ligne de log à
+  chaque usage.
 
 ## Sécurité
 
 - **ACL POSIX + LDAP/AD** : chaque recherche est filtrée par appartenance
   de l'utilisateur (public, propriétaire, utilisateurs et groupes
   autorisés).
-- **Authentification déléguée au SSO** (Keycloak, AgentConnect...) via un
-  header `X-User` injecté par Nginx après validation — simulable en
-  développement sans SSO (`DEV_USER`).
+- **Authentification par jeton signé** (RS256, clé publiée en JWKS),
+  vérifiée **par l'application elle-même** à chaque requête — jamais
+  déléguée à une ligne de configuration du reverse-proxy, qui serait
+  court-circuitée par tout ce qui atteint l'API autrement. Session en
+  cookie `httpOnly`, révocable : la déconnexion invalide réellement le
+  jeton de renouvellement côté serveur.
+- **Deux fournisseurs derrière une interface unique** : l'annuaire
+  LDAP/AD, et des comptes de secours locaux (Argon2id) qui portent leurs
+  propres groupes — sans eux, une panne d'annuaire rendrait DocSearch
+  totalement inaccessible, administration comprise. Le serveur choisit
+  seul le fournisseur ; aucun repli de l'un vers l'autre, qui masquerait
+  les pannes et trahirait la nature du compte.
+- **Connexion automatique Kerberos/SPNEGO** — l'utilisateur déjà
+  authentifié sur le domaine arrive connecté, sans saisie. Désactivée par
+  défaut (interrupteur dans le panneau d'administration) ; le formulaire
+  reste toujours disponible, la tentative échoue en silence sur un poste
+  hors domaine.
+- **Message d'erreur générique unique** sur échec de connexion, quelle
+  que soit la cause — et **jamais un 401 pour une panne** : annuaire ou
+  Redis indisponible répond 503, ce qui envoie chercher au bon endroit.
+- **Limitation des tentatives** (Redis), par identifiant *et* par
+  adresse IP, fenêtre ancrée au premier échec.
+- **Journal des connexions** (index Elasticsearch dédié) : succès,
+  identifiants refusés, blocages, indisponibilités — le mot de passe n'y
+  transite sous aucune forme, ce qu'un test vérifie.
 - **Protection zip slip / zip bomb** sur l'indexation d'archives, avec
   limites configurables (nombre de fichiers, taille décompressée,
   profondeur d'imbrication).

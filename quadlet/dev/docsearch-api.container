@@ -14,8 +14,22 @@ Image=localhost/docsearch/api:latest
 Network=docsearch-net.network
 PublishPort=8000:8000
 PodmanArgs=--network-alias=api
-Exec=uvicorn search_api:app --host 0.0.0.0 --port 8000
+Exec=uvicorn search_api:app --host 0.0.0.0 --port 8000 --h11-max-incomplete-event-size 65536
 EnvironmentFile=/etc/docsearch/docsearch.env
+# ── Secrets d'authentification ────────────────────────────────
+# Clés RS256 qui signent les jetons de session (générées par
+# `scripts/generer-cles.py`, lancé dans un conteneur JETABLE — ce
+# montage-ci étant en lecture seule) et keytab
+# Kerberos. Jamais dans l'image, jamais dans le dépôt : sur l'hôte,
+# montés en LECTURE SEULE au même chemin absolu qu'en développement.
+#
+# ⚠️  Podman rootless : les permissions 0700/0600 de ces fichiers sont
+# interprétées avec l'UID MAPPÉ dans le conteneur, pas celui de l'hôte.
+# Un fichier parfaitement lisible côté hôte peut rester illisible dedans
+# — même piège que PGDATA chowné hors plage subuid. Symptôme : /auth/login
+# répond 503 « clé privée illisible ».
+Volume=/etc/docsearch/jwt:/etc/docsearch/jwt:ro
+Volume=/etc/docsearch/krb5:/etc/docsearch/krb5:ro
 # Nécessaire uniquement pour l'aperçu de documents (conversion Office → PDF)
 Volume=/documents:/sources:ro
 

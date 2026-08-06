@@ -63,9 +63,12 @@ esac
 # ── Contrôles préalables ──────────────────────────────────────
 command -v podman >/dev/null 2>&1 || err "podman n'est pas installé."
 
-# Quadlet existe depuis podman 4.4 ; la production vise 4.9 (backports
-# Debian 12). En dessous, aucune unité ne serait générée — autant le
-# dire tout de suite plutôt que de laisser un systemctl start échouer.
+# Quadlet existe depuis podman 4.4 ; la production tourne sur Debian 13,
+# dont les dépôts stables livrent 5.4.2 (aucun backport nécessaire — il en
+# fallait un sur Debian 12, restée en 4.3). Le seuil reste 4.4 : c'est la
+# version qui fait exister Quadlet, pas celle qu'on vise. En dessous,
+# aucune unité ne serait générée — autant le dire tout de suite plutôt que
+# de laisser un systemctl start échouer.
 PODMAN_VERSION="$(podman --version | awk '{print $3}')"
 PODMAN_MAJOR="${PODMAN_VERSION%%.*}"
 PODMAN_MINOR="$(echo "$PODMAN_VERSION" | cut -d. -f2)"

@@ -120,6 +120,23 @@ machines qui en ont besoin : **ingest-1/2/3** (workers, watcher) et
 **frontend** (aperçu de document par l'API). Les unités le montent en
 lecture seule : `Volume=/data/docsearch-sources:/sources:ro`.
 
+L'unité `docsearch-api` monte deux répertoires de secrets, également en
+lecture seule : `/etc/docsearch/jwt` (clés RS256 qui signent les sessions)
+et `/etc/docsearch/krb5` (keytab du SSO). **Le montage étant en lecture
+seule, la génération des clés passe par un conteneur jetable** — un
+`podman exec` dans le service échouerait sur un système de fichiers en
+lecture seule :
+
+```bash
+sudo install -d -o 1000 -g 1000 -m 700 /etc/docsearch/jwt
+sudo podman run --rm -v /etc/docsearch/jwt:/etc/docsearch/jwt:Z \
+     localhost/docsearch/api:latest python scripts/generer-cles.py
+```
+
+`-o 1000` est l'UID de l'utilisateur *dans* le conteneur : appartenant à
+root, les clés seraient générées puis illisibles par le service, et
+`/auth/login` répondrait 503.
+
 ## Points à connaître
 
 **Aucune interpolation dans les unités.** Quadlet ne substitue pas
@@ -347,13 +364,35 @@ Checklist de validation de la bascule :
 
 ## Prérequis podman
 
-- **podman ≥ 4.4** (Quadlet). Debian 12 : passer par
-  `bookworm-backports`, la version des dépôts stable est trop ancienne.
-  L'installateur vérifie et refuse de continuer en dessous.
+- **podman ≥ 4.4** (Quadlet). **Debian 13 « trixie » livre 5.4.2 dans ses
+  dépôts stables : plus aucun backport n'est nécessaire.** (Sur une
+  Debian 12 résiduelle, il fallait passer par `bookworm-backports`, la
+  version stable — 4.3 — étant en dessous du seuil.) L'installateur
+  vérifie et refuse de continuer en dessous.
 - **netavark** et **aardvark-dns** : sans aardvark-dns, aucun conteneur
   ne résout le nom d'un autre et toute la pile tombe.
 - **rootful** : les ports 80/443, les montages de partages réseau et la
   lecture des ACL POSIX/CIFS supposent podman en root.
+
+### Passage de podman 4.9 à 5.4 (Debian 12 → 13)
+
+C'est un saut de version majeure, et il mérite une vérification plutôt
+qu'une supposition. Les clés Quadlet employées ici (`Image`, `Exec`,
+`Volume`, `Network`, `PublishPort`, `PodmanArgs`, `HealthCmd`) n'ont pas
+changé de syntaxe, et le seul retrait notable de podman 5 — CNI, remplacé
+par netavark — ne concerne pas cette installation, qui utilise déjà
+netavark et aardvark-dns.
+
+Sur la **première** machine migrée, faire tourner le générateur à blanc
+avant de démarrer quoi que ce soit : il relit toutes les unités et signale
+les clés qu'il ne comprend pas, sans rien créer.
+
+```bash
+sudo /usr/lib/systemd/system-generators/podman-system-generator --dryrun
+```
+
+Une sortie sans erreur vaut mieux qu'un `systemctl start` qui échoue unité
+par unité.
 
 ⚠️ **Le magasin d'images de root est distinct de celui de chaque
 utilisateur.** Une image construite ou tirée sans `sudo` n'est pas

@@ -155,8 +155,20 @@ Go d'archives, ce n'est pas anecdotique.
 deux à trois (comptez ~2,5 Go pour Elasticsearch, ~2,5 Go pour Kibana,
 ~1,2 Go pour Tika avant compression).
 
+Les images DocSearch portent DEUX tags depuis `./manage.sh build` :
+`:latest`, que visent les unités Quadlet, et `:<version>` lu dans le
+fichier `VERSION` des dépôts. **Transférer les deux** — c'est le tag
+versionné qui permet ensuite de savoir, sur un serveur isolé, ce qui y a
+été chargé (`sudo podman images`). Nommer aussi les archives d'après la
+version : sur une chaîne de transfert manuelle vers huit machines, une
+archive anonyme est une confusion qui attend son tour.
+
 ```bash
 mkdir -p ~/docsearch-transfert && cd ~/docsearch-transfert
+
+# Version produit à transférer — celle des fichiers VERSION des dépôts,
+# identique dans les trois, telle que taguée par ./manage.sh build.
+VERSION=2.2.0
 
 sudo podman save docker.elastic.co/elasticsearch/elasticsearch:9.4.3 \
   | gzip > es-data.tar.gz
@@ -169,16 +181,32 @@ sudo podman save docker.io/confluentinc/cp-kafka:8.3.0 | gzip > kafka.tar.gz
 
 sudo podman save docker.io/library/redis:7.2-alpine \
              docker.io/library/nginx:1.27-alpine \
-             localhost/docsearch/api:latest \
-             localhost/docsearch/ui-vue:latest \
-  | gzip > frontend.tar.gz
+             localhost/docsearch/api:latest     localhost/docsearch/api:$VERSION \
+             localhost/docsearch/ui-vue:latest  localhost/docsearch/ui-vue:$VERSION \
+  | gzip > frontend-$VERSION.tar.gz
 
 sudo podman save docker.io/apache/tika:3.3.1.0-full \
-             localhost/docsearch/ingestion:latest \
-  | gzip > ingest.tar.gz
+             localhost/docsearch/ingestion:latest localhost/docsearch/ingestion:$VERSION \
+  | gzip > ingest-$VERSION.tar.gz
 
 sha256sum *.tar.gz > SHA256SUMS
 ```
+
+ℹ️ Les deux tags d'une même image ne pèsent rien de plus dans l'archive :
+`podman save` n'écrit les couches qu'une fois et ne répète que la
+référence.
+
+Pour vérifier ce que contient une archive **sans la charger**, ou ce
+qu'une image chargée annonce comme identité :
+
+```bash
+sudo podman inspect --format '{{index .Labels "org.opencontainers.image.version"}} {{index .Labels "org.opencontainers.image.revision"}}' \
+  localhost/docsearch/api:latest
+```
+
+Un `revision` suffixé de `+modifie` signale une image construite depuis
+un dépôt portant des modifications non commitées — à ne pas laisser
+partir en production.
 
 ### 4.5 Récupérer les paquets podman
 
@@ -293,17 +321,22 @@ systemctl list-units 'docsearch-*'
 ```bash
 # 1. Sur la machine de préparation
 cd ~/docsearch/docsearch-api && git pull
+VERSION=$(cat VERSION)
 cd ~/docsearch/docsearch-infra && sudo ./manage.sh build api
-sudo podman save localhost/docsearch/api:latest | gzip > ~/docsearch-transfert/api.tar.gz
+sudo podman save localhost/docsearch/api:latest localhost/docsearch/api:$VERSION \
+  | gzip > ~/docsearch-transfert/api-$VERSION.tar.gz
 
-# 2. Transfert de api.tar.gz + du code à jour vers frontend
+# 2. Transfert de api-$VERSION.tar.gz + du code à jour vers frontend
 
 # 3. Sur frontend
-gunzip -c api.tar.gz | sudo podman load
+gunzip -c api-*.tar.gz | sudo podman load
 sudo systemctl restart docsearch-api docsearch-alert-worker
+
+# 4. Contrôle : la version annoncée est-elle la bonne ?
+curl -s http://localhost:8000/health | python3 -m json.tool
 ```
 
-Trois points à garder en tête :
+Quatre points à garder en tête :
 
 - `podman load` d'une image portant le même nom **remplace le tag**,
   mais les conteneurs en cours continuent de tourner sur l'ancienne
@@ -314,17 +347,35 @@ Trois points à garder en tête :
 - Les workers d'ingestion sont répliqués : les mettre à jour **une
   machine à la fois** (ingest-1, puis ingest-2, puis ingest-3), pour
   qu'il reste toujours des consommateurs Kafka actifs.
+- Une mise à jour ne portant que sur une brique fait volontairement
+  diverger les versions — l'administration l'affiche alors en
+  avertissement, ce qui est le comportement voulu. Elle ne redevient
+  silencieuse qu'une fois les trois briques alignées.
 
 ## 8. Pièges connus
 
 - **Magasin d'images rootful.** Voir §6 : toujours `sudo podman load`,
   `sudo podman images`, `sudo podman ps`.
-- **Aucun tag flottant.** Le crawler Elastic est épinglé à `1.0.0`
-  (même digest `sha256:6f3c02f6c783…` que le `latest` du 2026-07-31). Un
-  tag flottant rend impossible de savoir quelle version transférer et
-  fait diverger les machines. **Toute nouvelle image ajoutée à une unité
-  doit être épinglée**, et son nom pleinement qualifié
-  (`docker.io/library/...`) : podman n'a pas de registre implicite.
+- **Aucun tag flottant** — pour les images TIERCES. Le crawler Elastic
+  est épinglé à `1.0.0` (même digest `sha256:6f3c02f6c783…` que le
+  `latest` du 2026-07-31). Un tag flottant rend impossible de savoir
+  quelle version transférer et fait diverger les machines. **Toute
+  nouvelle image tierce ajoutée à une unité doit être épinglée**, et son
+  nom pleinement qualifié (`docker.io/library/...`) : podman n'a pas de
+  registre implicite.
+
+  **Exception assumée : les trois images DocSearch restent en `:latest`
+  dans les unités.** Ce que la règle ci-dessus proscrit, c'est un tag
+  qu'un `podman pull` peut faire glisser sous les pieds d'une machine
+  sans qu'on l'ait demandé. Ici il n'y a pas de registre : une image
+  n'arrive que par un `podman load` explicite d'une archive précise, et
+  le conteneur continue de tourner sur l'ancienne jusqu'au `systemctl
+  restart`. Épingler les unités obligerait à les éditer, recharger
+  systemd et redémarrer sur chaque machine à chaque livraison, sans rien
+  empêcher de plus. La traçabilité est assurée autrement : le tag
+  `:<version>` transféré à côté de `:latest` (§4.4), les labels OCI de
+  l'image, et l'affichage en administration (« État des composants »,
+  bloc « Versions déployées »).
 - **aardvark-dns.** Sans lui, aucun conteneur ne résout le nom d'un
   autre : l'API ne trouve pas Redis, Nginx ne trouve pas l'interface.
   Symptôme typique — tout démarre, puis tout échoue en boucle sur des

@@ -304,8 +304,47 @@ case "${1:-help}" in
     build_one() {
         local ctx="$1" tag="$2"
         [ -d "$ctx" ] || err "Dépôt introuvable : $ctx (les dépôts doivent être clonés côte à côte)"
-        log "Construction de $tag depuis $ctx..."
-        $PODMAN build --build-arg APP_UID="${APP_UID:-1000}" -t "$tag" "$ctx"
+
+        # ── Identité de la livraison ──────────────────────────
+        # La version PRODUIT est déclarée dans le fichier VERSION du
+        # dépôt, la même dans les trois. L'estampille de build (commit +
+        # date) est relevée ICI parce que la machine de construction est
+        # le seul endroit à connaître git : le dépôt .git n'est pas copié
+        # dans les images.
+        local version commit dirty build_date
+        version="$(tr -d '[:space:]' < "$ctx/VERSION" 2>/dev/null || true)"
+        [ -n "$version" ] || err "$ctx/VERSION absent ou vide — c'est la source de la version produit."
+        commit="$(git -C "$ctx" rev-parse --short HEAD 2>/dev/null || echo inconnu)"
+        # Suffixe « +modifie » quand le dépôt porte des modifications non
+        # commitées. C'est ce qui rend l'estampille réellement utile : une
+        # image construite depuis un dépôt sale est un cas fréquent en
+        # préparation de livraison, et strictement indiagnosticable après
+        # coup si rien ne le signale.
+        #
+        # `status --porcelain` et non `diff --quiet` : les fichiers NON
+        # SUIVIS comptent, puisque le `COPY app/ .` des Containerfile les
+        # embarque dans l'image comme les autres.
+        dirty=""
+        [ -z "$(git -C "$ctx" status --porcelain 2>/dev/null)" ] || dirty="+modifie"
+        build_date="$(date -Is)"
+
+        log "Construction de $tag depuis $ctx (version $version, commit ${commit}${dirty})..."
+        $PODMAN build \
+            --build-arg APP_UID="${APP_UID:-1000}" \
+            --build-arg DOCSEARCH_VERSION="$version" \
+            --build-arg DOCSEARCH_COMMIT="${commit}${dirty}" \
+            --build-arg DOCSEARCH_BUILD_DATE="$build_date" \
+            -t "$tag" -t "${tag%:latest}:$version" \
+            "$ctx"
+
+        # Double tag : les unités Quadlet continuent de viser ":latest" —
+        # le vecteur de déploiement est un `podman load` d'une archive
+        # précise, pas un `pull` depuis un registre, donc le tag flottant
+        # ne provoque pas ici la dérive que proscrit la règle « aucun tag
+        # flottant » de HOWTO-deploiement-hors-ligne.md (laquelle vise les
+        # images TIERCES, tirées d'un registre). Le tag versionné existe à
+        # côté pour que `podman images` garde une trace auditable de ce
+        # qui a été chargé sur chaque machine.
     }
     case "$WHAT" in
       api)       build_one "$REPOS_DIR/docsearch-api"       "$IMAGE_API" ;;

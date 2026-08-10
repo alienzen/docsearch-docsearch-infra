@@ -1,25 +1,28 @@
 name: CI
 
 on:
-  push: { branches: [main, develop] }
+  push: { branches: [main] }
   pull_request: { branches: [main] }
 
 jobs:
-  validate-compose:
+  # Remplace l'ancien job "validate-compose", devenu sans objet à la
+  # migration vers podman + Quadlet : il validait un docker-compose.yml
+  # qui n'existe plus, et clonait pour cela trois dépôts frères dont les
+  # build contexts ne servaient qu'au compose.
+  valider-quadlet:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: docsearch-infra
-      # Clone les dépôts frères nécessaires à la résolution des build contexts
-      - uses: actions/checkout@v4
-        with: { repository: "${{ github.repository_owner }}/docsearch-ingestion", path: docsearch-ingestion }
-      - uses: actions/checkout@v4
-        with: { repository: "${{ github.repository_owner }}/docsearch-api", path: docsearch-api }
-      - uses: actions/checkout@v4
-        with: { repository: "${{ github.repository_owner }}/docsearch-ui", path: docsearch-ui }
-      - name: Validate compose syntax
-        working-directory: docsearch-infra
-        run: |
-          cp .env.example .env
-          docker compose config --quiet
+
+      # podman est fourni par l'image ubuntu-latest ; l'installation n'est
+      # là que pour survivre à un changement d'image du runner. Le
+      # générateur Quadlet est livré avec podman, pas séparément.
+      - name: Installer podman si absent
+        run: command -v podman >/dev/null || { sudo apt-get update && sudo apt-get install -y podman; }
+
+      # Rejoue install-units.sh pour les six rôles dans un répertoire
+      # temporaire et passe le générateur Quadlet sur le résultat. Rien
+      # n'est téléchargé ni démarré : voir l'en-tête du script pour ce
+      # que la validation couvre exactement.
+      - name: Valider les unités Quadlet des six rôles
+        run: ./quadlet/valider-unites.sh

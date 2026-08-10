@@ -69,6 +69,12 @@ unité qui réclame un `.volume` ou un `.network` absent du rôle, et sur
 un fichier ajouté dans `dev/` ou `roles/` que `install-units.sh` ne
 copie pas — cas où l'unité ne serait jamais déployée.
 
+Il vérifie aussi la syntaxe de tous les scripts suivis du dépôt, pas
+seulement ceux de `quadlet/` : `manage.sh`, les sondes de `zabbix/` et
+`generer-reference.py` en font partie. Ils sont repérés à leur shebang,
+faute d'extension pour la plupart — une sonde Zabbix s'appelle
+`docsearch-zabbix-redis`, pas `docsearch-zabbix-redis.sh`.
+
 Ce qu'il ne voit pas : rien n'est téléchargé ni démarré, donc un
 `Image=` pointant vers un tag absent du registre interne passe la
 validation et n'échoue qu'au démarrage. C'est ce même script que lance

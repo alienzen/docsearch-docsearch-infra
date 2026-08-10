@@ -16,7 +16,11 @@
 #      docsearch-kafka-ready.service) via systemd-analyze verify ;
 #    - la cohérence entre les fichiers du dépôt et ce que l'installateur
 #      copie réellement : une unité ajoutée dans quadlet/ mais oubliée
-#      dans install-units.sh ne serait jamais déployée.
+#      dans install-units.sh ne serait jamais déployée ;
+#    - la syntaxe de TOUS les scripts du dépôt, pas seulement ceux de
+#      quadlet/ : les sondes Zabbix et le script d'attente Kafka sont des
+#      commandes déposées sur les serveurs, où une faute de frappe ne se
+#      voit qu'à l'exécution.
 #
 #  Ce qui n'est PAS vérifié : rien n'est téléchargé ni démarré. Les
 #  images référencées ne sont pas résolues, la configuration
@@ -62,14 +66,48 @@ else
     log "générateur : $QUADLET_BIN"
 fi
 
-# ── Syntaxe des scripts shell ─────────────────────────────────
-for script in "$HERE/install-units.sh" "$HERE/transfer-images.sh" \
-              "$HERE/common/bin/docsearch-wait-kafka" "$HERE/../manage.sh"; do
-    if [ -f "$script" ] && ! bash -n "$script"; then
-        err "$(basename "$script") : erreur de syntaxe."
-        ECHECS=$((ECHECS + 1))
-    fi
-done
+# ── Syntaxe des scripts du dépôt ──────────────────────────────
+# Repérage par shebang, et non par extension : ni les sondes Zabbix
+# (zabbix/scripts/docsearch-zabbix-*) ni docsearch-wait-kafka ne portent
+# de .sh — ce sont des commandes, appelées par leur nom. Un contrôle sur
+# *.sh les manquerait toutes. Passer par git ls-files borne l'inspection
+# aux fichiers suivis : ni .env local, ni sauvegarde, ni node_modules.
+INFRA="$(cd "$HERE/.." && pwd)"
+NB_SHELL=0
+NB_PYTHON=0
+
+if git -C "$INFRA" rev-parse --git-dir >/dev/null 2>&1; then
+    liste_fichiers() { git -C "$INFRA" ls-files -z; }
+else
+    warn "hors dépôt git — inspection de l'arborescence complète."
+    liste_fichiers() { (cd "$INFRA" && find . -path ./.git -prune -o -type f -print0); }
+fi
+
+while IFS= read -r -d '' fichier; do
+    chemin="$INFRA/$fichier"
+    [ -f "$chemin" ] || continue
+    case "$(head -n 1 "$chemin" 2>/dev/null)" in
+        '#!'*bash*|'#!'*/sh|'#!'*'/sh '*|'#!'*env\ sh)
+            NB_SHELL=$((NB_SHELL + 1))
+            if ! bash -n "$chemin"; then
+                err "$fichier : erreur de syntaxe shell."
+                ECHECS=$((ECHECS + 1))
+            fi
+            ;;
+        '#!'*python*)
+            # ast.parse plutôt que py_compile : même contrôle de syntaxe,
+            # sans __pycache__ déposé à côté du source.
+            NB_PYTHON=$((NB_PYTHON + 1))
+            if command -v python3 >/dev/null 2>&1 &&
+               ! python3 -c 'import ast,sys; ast.parse(open(sys.argv[1]).read())' "$chemin"; then
+                err "$fichier : erreur de syntaxe python."
+                ECHECS=$((ECHECS + 1))
+            fi
+            ;;
+    esac
+done < <(liste_fichiers)
+
+log "syntaxe : $NB_SHELL script(s) shell, $NB_PYTHON python"
 
 # ── Unités systemd classiques (hors Quadlet) ──────────────────
 # docsearch.target et le verrou Kafka ne passent pas par le générateur :

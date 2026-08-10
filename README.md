@@ -16,7 +16,7 @@ DocSearch est découpé en 6 dépôts indépendants :
 |---|---|---|
 | [docsearch-ingestion](../docsearch-ingestion) | Extraction, ACL, indexation | Évolue avec les formats de documents |
 | [docsearch-api](../docsearch-api) | API de recherche (FastAPI) | Évolue avec les besoins de recherche |
-| [docsearch-ui](../docsearch-ui) | Interface web statique | Évolue avec l'UX |
+| [docsearch-ui-vue](../docsearch-ui-vue) | Interface web (Vue 3 + DSFR) | Évolue avec l'UX |
 | **docsearch-infra** (ce dépôt) | Orchestration, déploiement | Évolue rarement |
 | [docsearch-docs](../docsearch-docs) | Documents commerciaux | Géré par les équipes commerciales |
 | [docsearch-dataset-generator](../docsearch-dataset-generator) | Génération de jeux de test | Utilisé ponctuellement, hors production |
@@ -31,7 +31,7 @@ docsearch/
 ├── docsearch-infra/       ← vous êtes ici, lancez manage.sh depuis ce dossier
 ├── docsearch-ingestion/
 ├── docsearch-api/
-├── docsearch-ui/
+├── docsearch-ui-vue/
 └── docsearch-docs/
 ```
 
@@ -40,7 +40,7 @@ mkdir docsearch && cd docsearch
 git clone <url>/docsearch-infra.git
 git clone <url>/docsearch-ingestion.git
 git clone <url>/docsearch-api.git
-git clone <url>/docsearch-ui.git
+git clone <url>/docsearch-ui-vue.git
 git clone <url>/docsearch-docs.git
 
 cd docsearch-infra

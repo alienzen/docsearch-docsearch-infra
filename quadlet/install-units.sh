@@ -18,6 +18,11 @@
 #    --no-enable        n'active PAS le démarrage au boot (et respecte un
 #                       "systemctl disable docsearch.target" déjà en place)
 #    --dry-run          montre ce qui serait fait, n'écrit rien
+#    --staging-root DIR installe réellement, mais sous DIR au lieu de la
+#                       racine : DIR/etc/containers/systemd, DIR/etc/docsearch…
+#                       Ni root ni systemctl. Sert à la validation en CI
+#                       (voir valider-unites.sh) et à inspecter le résultat
+#                       d'une installation sans toucher à la machine.
 #
 #  Les fichiers de configuration (/etc/docsearch/*.env) ne sont JAMAIS
 #  écrasés : à la première installation ils sont copiés depuis les
@@ -44,6 +49,7 @@ WORKERS=""
 SINGLETONS=false
 DRY_RUN=false
 ENABLE_BOOT=true
+STAGING_ROOT=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -51,13 +57,25 @@ while [ $# -gt 0 ]; do
         --with-singletons) SINGLETONS=true;  shift ;;
         --no-enable)       ENABLE_BOOT=false; shift ;;
         --dry-run)         DRY_RUN=true;     shift ;;
+        --staging-root)    STAGING_ROOT="${2:-}"; shift 2 ;;
         *) err "Option inconnue : $1" ;;
     esac
 done
 
+# --staging-root déplace les quatre destinations sous une racine à part.
+# Le reste du script est inchangé : c'est bien la même installation qui est
+# jouée, au chemin près — sans quoi la validation ne prouverait rien.
+if [ -n "$STAGING_ROOT" ]; then
+    [ "${STAGING_ROOT:0:1}" = "/" ] || err "--staging-root exige un chemin absolu : $STAGING_ROOT"
+    QUADLET_DIR="$STAGING_ROOT$QUADLET_DIR"
+    SYSTEMD_DIR="$STAGING_ROOT$SYSTEMD_DIR"
+    CONFIG_DIR="$STAGING_ROOT$CONFIG_DIR"
+    BIN_DIR="$STAGING_ROOT$BIN_DIR"
+fi
+
 case "$ROLE" in
     dev|es-data|es-voting|kafka|frontend|ingest) ;;
-    *) err "Usage : sudo ./install-units.sh <dev|es-data|es-voting|kafka|frontend|ingest> [--workers N] [--with-singletons] [--dry-run]" ;;
+    *) err "Usage : sudo ./install-units.sh <dev|es-data|es-voting|kafka|frontend|ingest> [--workers N] [--with-singletons] [--dry-run] [--staging-root DIR]" ;;
 esac
 
 # ── Contrôles préalables ──────────────────────────────────────
@@ -77,7 +95,7 @@ if [ "$PODMAN_MAJOR" -lt 4 ] || { [ "$PODMAN_MAJOR" -eq 4 ] && [ "$PODMAN_MINOR"
 fi
 log "podman $PODMAN_VERSION détecté."
 
-if [ "$DRY_RUN" = false ] && [ "$(id -u)" -ne 0 ]; then
+if [ "$DRY_RUN" = false ] && [ -z "$STAGING_ROOT" ] && [ "$(id -u)" -ne 0 ]; then
     err "À lancer avec sudo : les unités s'installent dans $QUADLET_DIR (podman rootful)."
 fi
 
@@ -227,6 +245,13 @@ else
 fi
 
 # ── Prise en compte ───────────────────────────────────────────
+# Sous --staging-root, rien n'a été écrit à un emplacement que systemd
+# regarde : recharger ou activer la cible n'aurait aucun sens.
+if [ -n "$STAGING_ROOT" ]; then
+    log "Rôle « $ROLE » préparé sous $STAGING_ROOT (aucun systemctl exécuté)."
+    exit 0
+fi
+
 run systemctl daemon-reload
 
 # Le démarrage au boot n'est activé que s'il est demandé. Sans cette

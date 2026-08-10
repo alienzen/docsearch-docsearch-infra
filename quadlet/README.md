@@ -21,6 +21,7 @@ Ce que ça change en pratique :
 ```
 quadlet/
 ├── install-units.sh          installe le rôle demandé sur la machine
+├── valider-unites.sh         vérifie les unités des 6 rôles (CI et local)
 ├── common/
 │   ├── docsearch.target              cible commune (les 8 machines)
 │   ├── docsearch-net.network         réseau bridge + DNS entre conteneurs
@@ -51,7 +52,32 @@ du dépôt est donc sans risque.
 
 Options : `--workers N` (nombre d'unités worker), `--with-singletons`
 (ajoute le watcher — **ingest-1 uniquement**), `--no-enable` (n'active
-pas le démarrage au boot), `--dry-run`.
+pas le démarrage au boot), `--dry-run`, `--staging-root DIR` (installe
+sous `DIR` au lieu de `/` — ni root ni `systemctl`, voir ci-dessous).
+
+### Valider les unités avant de pousser
+
+```bash
+./quadlet/valider-unites.sh          # les 6 rôles
+./quadlet/valider-unites.sh frontend # un seul
+```
+
+Le script rejoue `install-units.sh` dans un répertoire temporaire
+(`--staging-root`), puis passe le générateur Quadlet en `-dryrun` sur
+les unités obtenues. Il échoue sur une clé mal orthographiée, sur une
+unité qui réclame un `.volume` ou un `.network` absent du rôle, et sur
+un fichier ajouté dans `dev/` ou `roles/` que `install-units.sh` ne
+copie pas — cas où l'unité ne serait jamais déployée.
+
+Ce qu'il ne voit pas : rien n'est téléchargé ni démarré, donc un
+`Image=` pointant vers un tag absent du registre interne passe la
+validation et n'échoue qu'au démarrage. C'est ce même script que lance
+la CI (`.github/workflows/ci.yml`).
+
+Comme la validation dépend de la version de podman du runner alors que
+la production suit celle de Debian stable, le script journalise la
+version employée : c'est là qu'il faut regarder si une unité valide en
+CI est refusée en production.
 
 ### Démarrage au boot
 

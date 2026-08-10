@@ -1,23 +1,36 @@
 name: CI
 
 on:
-  push: { branches: [main, develop] }
+  push: { branches: [main] }
   pull_request: { branches: [main] }
 
 # Ce workflow validait la syntaxe du docker-compose en clonant les dépôts
 # frères (pour résoudre les contextes de build). Il ne pouvait plus passer :
 # le fichier compose et `.env.example` sont partis avec la migration vers
 # podman + systemd (Quadlet), et l'un des dépôts clonés, `docsearch-ui`, est
-# archivé en bundle git. Les unités Quadlet ne se valident pas sans podman
-# ≥ 4.4 sur le runner ; on se limite donc à ce qui se vérifie sans
-# dépendance.
+# archivé en bundle git.
+#
+# Le repli retenu un temps — se limiter à un "bash -n" sur les scripts, faute
+# de podman sur le runner — reposait sur une prémisse fausse : l'image
+# ubuntu-latest fournit podman (4.9 sur ubuntu-24.04), donc le générateur
+# Quadlet, qui est livré avec. Les unités sont donc validées pour de bon, et
+# la vérification de syntaxe des scripts est reprise par valider-unites.sh,
+# qui la fait sur quatre scripts au lieu de deux.
 
 jobs:
-  lint-scripts:
+  valider-quadlet:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Vérifier la syntaxe des scripts shell
-        run: |
-          bash -n manage.sh
-          bash -n quadlet/install-units.sh
+
+      # L'installation n'est là que pour survivre à un changement d'image du
+      # runner : podman est présent aujourd'hui.
+      - name: Installer podman si absent
+        run: command -v podman >/dev/null || { sudo apt-get update && sudo apt-get install -y podman; }
+
+      # Rejoue install-units.sh pour les six rôles dans un répertoire
+      # temporaire et passe le générateur Quadlet sur le résultat. Rien
+      # n'est téléchargé ni démarré : voir l'en-tête du script pour ce
+      # que la validation couvre exactement.
+      - name: Valider les unités Quadlet des six rôles
+        run: ./quadlet/valider-unites.sh

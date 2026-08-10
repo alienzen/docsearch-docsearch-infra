@@ -74,15 +74,31 @@ done
 # ── Unités systemd classiques (hors Quadlet) ──────────────────
 # docsearch.target et le verrou Kafka ne passent pas par le générateur :
 # ce sont des unités écrites à la main, que systemd-analyze sait relire.
+#
+# ⚠️ systemd-analyze exige que l'ExecStart existe et soit exécutable sur
+# la machine qui valide. Vérifier les unités telles quelles ne marchait
+# donc que sur un hôte où la pile est DÉJÀ déployée (le script est en
+# /usr/local/bin, copié par install-units.sh) et échouait partout
+# ailleurs, CI comprise — validation dépendante de la machine, donc
+# inutilisable. On vérifie des copies dont les chemins de déploiement
+# sont ramenés à ceux du dépôt : la syntaxe est la même, et l'existence
+# du script embarqué est au passage contrôlée.
 if command -v systemd-analyze >/dev/null 2>&1; then
+    UNITES_TMP="$(mktemp -d)"
+    cp "$HERE/common/docsearch.target" "$UNITES_TMP/"
+    sed -e "s|^ExecStart=/usr/local/bin/|ExecStart=$HERE/common/bin/|" \
+        -e "s|^EnvironmentFile=/etc/docsearch/|EnvironmentFile=-/etc/docsearch/|" \
+        "$HERE/common/docsearch-kafka-ready.service" \
+        > "$UNITES_TMP/docsearch-kafka-ready.service"
     if ! systemd-analyze verify \
-            "$HERE/common/docsearch.target" \
-            "$HERE/common/docsearch-kafka-ready.service" 2>&1; then
+            "$UNITES_TMP/docsearch.target" \
+            "$UNITES_TMP/docsearch-kafka-ready.service" 2>&1; then
         err "docsearch.target / docsearch-kafka-ready.service : unité invalide."
         ECHECS=$((ECHECS + 1))
     else
         log "unités systemd communes : OK"
     fi
+    rm -rf "$UNITES_TMP"
 else
     warn "systemd-analyze absent — docsearch.target non vérifié."
 fi

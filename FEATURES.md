@@ -9,8 +9,9 @@ l'orchestration.
 
 L'interface est [docsearch-ui-vue](../docsearch-ui-vue/README.md), **Vue 3
 conforme au Système de Design de l'État**. Elle a remplacé `docsearch-ui`
-(HTML/JS sans build), dont le dépôt est conservé pour référence et
-mobilisable en repli (image construite à la main, sans unité systemd). Deux
+(HTML/JS sans build), dont le dépôt est désormais archivé en bundle git
+(restauration et repli manuel : voir [README.md](README.md), § Architecture
+multi-dépôts). Deux
 fonctionnalités de l'ancienne interface n'ont pas été reprises et sont
 retirées du produit : les 7 thèmes de couleur maison, remplacés par le
 clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.

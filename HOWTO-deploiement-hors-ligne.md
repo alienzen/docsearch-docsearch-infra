@@ -29,9 +29,11 @@ réseau : ces étapes se font ailleurs, sur une machine de préparation.
   compile `gssapi` contre `libkrb5-dev` : ces paquets s'installent (et se
   purgent) pendant le build, sur la machine de préparation.
 
-- **Interfaces web** — aucun CDN. Les polices Marianne sont servies
-  localement (`docsearch-ui/public/fonts/`), les logos sont des SVG
-  `data:` inline. Côté `docsearch-ui-vue`, `@iconify/vue` est aliasé
+- **Interface web** — aucun CDN. Les polices Marianne viennent du paquet
+  `@gouvfr/dsfr` et entrent dans le bundle Vite à la construction (voir
+  [src/dsfr.ts](../docsearch-ui-vue/src/dsfr.ts)) : plus rien à recopier
+  à la main dans `public/fonts/` comme le faisait `docsearch-ui`. Les
+  logos sont des SVG `data:` inline. `@iconify/vue` est aliasé
   vers sa variante `offline` dans
   [vite.config.ts](../docsearch-ui-vue/vite.config.ts) — sans cet alias,
   le composant `VIcon` du DSFR irait chercher **chaque icône** sur

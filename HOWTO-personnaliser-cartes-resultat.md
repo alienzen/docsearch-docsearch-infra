@@ -10,25 +10,24 @@ code central** — donc sans risque de perte à une mise à jour — et **sans
 reconstruire l'application** : on les édite dans le conteneur, on recharge
 la page.
 
-## Repérer son interface
+## Une seule interface désormais
 
-L'interface Vue/DSFR a remplacé l'historique, qui reste mobilisable en
-repli. Le mécanisme est le même dans son principe, mais **les fichiers et
-les sélecteurs diffèrent** : vérifier laquelle est servie avant de
-commencer.
+Ce document décrivait les deux interfaces. L'historique (`docsearch-ui`,
+HTML/JS, servie sur le port 8082) a été retirée : son dépôt est archivé en
+bundle git à la racine, elle n'a ni unité systemd ni service déclaré. La
+section qui lui était consacrée est supprimée — son contenu reste dans
+l'historique de ce dépôt et dans le bundle, et la procédure de restauration
+est dans le [README](README.md), § Architecture multi-dépôts.
 
-| Interface | Port | Statut | Section |
-|---|---|---|---|
-| [`docsearch-ui-vue`](../docsearch-ui-vue/README.md) (Vue + DSFR) | 8080 | **en service** | [§ A](#a--interface-vue-docsearch-ui-vue) |
-| `docsearch-ui` (HTML/JS) | 8082 | repli (image construite à la main, sans unité systemd) | [§ B](#b--interface-historique-docsearch-ui) |
-
-> La section B ne sert plus qu'au repli : elle disparaîtra avec le dépôt
-> `docsearch-ui`. Si une personnalisation y existe encore, la transposer via la table
-> de correspondance des sélecteurs, en fin de section A.
+Reste [`docsearch-ui-vue`](../docsearch-ui-vue/README.md) (Vue + DSFR, port
+8080). Si une personnalisation écrite pour l'ancienne interface doit être
+reprise, la transposer avec la table de correspondance des sélecteurs
+([§ 3](#3-correspondance-des-sélecteurs)) : le principe est le même, les
+fichiers et les sélecteurs diffèrent.
 
 ## Trouver la clé technique d'une source
 
-Commun aux deux interfaces. Trois façons de la récupérer :
+Trois façons de la récupérer :
 
 - Inspecteur du navigateur : attribut `data-source` sur la carte.
 - Admin des sources (panneau « Toutes les sources », vue unifiée
@@ -38,14 +37,14 @@ Commun aux deux interfaces. Trois façons de la récupérer :
 
 ---
 
-# A — Interface Vue (`docsearch-ui-vue`)
+# Personnalisation (`docsearch-ui-vue`)
 
 Deux fichiers dans `docsearch-ui-vue/public/`, servis tels quels par Nginx :
 ils **n'entrent pas dans le bundle**. On peut donc les éditer directement
 dans le conteneur, à `/usr/share/nginx/html/`, et recharger la page — sans
 reconstruire l'application.
 
-## A.1 Personnalisation visuelle (CSS)
+## 1. Personnalisation visuelle (CSS)
 
 Fichier : `custom-sources.css`. Il est référencé **en fin de `<body>`**, donc
 après la feuille générée par Vite dans `<head>` : à spécificité égale, ce
@@ -61,7 +60,7 @@ Préférer les **jetons de couleur DSFR** (`var(--text-title-blue-france)`,
 `var(--background-alt-grey)`…) aux couleurs en dur : eux seuls tiennent le
 contraste en thème clair comme en thème sombre.
 
-## A.2 Personnalisation du contenu (registre déclaratif)
+## 2. Personnalisation du contenu (registre déclaratif)
 
 Fichier : `custom-sources.js`. Il publie un objet, une entrée par source :
 
@@ -83,7 +82,8 @@ ne couvre pas relève de `custom-sources.css`.
 
 ### Pourquoi un registre et non un hook
 
-C'est la différence de fond avec la section B. Sous Vue, tout ce qu'un hook
+C'est la différence de fond avec l'ancienne interface, qui exposait des
+hooks JS (`sourceCardHooks`). Sous Vue, tout ce qu'un hook
 écrirait dans le DOM est **écrasé au rendu suivant** — changement de page de
 résultats, bascule de la vue compacte, dépli d'une carte. Un registre de
 valeurs, lu *pendant* le rendu, est idempotent par construction et survit à
@@ -93,9 +93,9 @@ On y perd l'arbitraire du JS ; on y gagne une personnalisation qui ne
 disparaît pas au premier clic — panne difficile à diagnostiquer s'il avait
 fallu la subir.
 
-## A.3 Correspondance des sélecteurs
+## 3. Correspondance des sélecteurs
 
-Pour transposer une personnalisation écrite pour la section B :
+Pour transposer une personnalisation écrite pour l'interface historique :
 
 | `docsearch-ui` | `docsearch-ui-vue` |
 |---|---|
@@ -108,7 +108,7 @@ Pour transposer une personnalisation écrite pour la section B :
 
 L'attribut `data-source` est le seul élément commun aux deux interfaces.
 
-## A.4 Vérifier
+## 4. Vérifier
 
 Sans reconstruction, sur un conteneur qui tourne déjà :
 
@@ -130,79 +130,3 @@ sudo systemctl restart docsearch-ui-vue
 reconstruction suivante**. Le dossier `public/` du dépôt reste la source de
 vérité.
 
----
-
-# B — Interface historique (`docsearch-ui`)
-
-Deux fichiers dédiés dans `docsearch-ui/public/`, hors du code central
-(`index.css`, `results.js`).
-
-## B.1 Personnalisation visuelle (CSS)
-
-Fichier : `docsearch-ui/public/css/custom-sources.css`, chargé après
-`index.css` (voir `index.html`) — toute règle ici l'emporte sur le style par
-défaut.
-
-```css
-.result-card[data-source="sharepoint_rh"] {
-  border-left: 4px solid #0C447C;
-}
-.result-card[data-source="sharepoint_rh"] .result-title {
-  color: #0C447C;
-}
-```
-
-N'importe quel sous-élément de la carte peut être ciblé de la même façon
-(`.ext-icon`, `.source-badge`, `.result-meta`, `.snippet`, ...).
-
-## B.2 Personnalisation comportementale (JS)
-
-Fichier : `docsearch-ui/public/js/custom-sources.js`. On y enregistre un hook
-par source dans l'objet global `sourceCardHooks` (déclaré dans
-`constants.js`) :
-
-```js
-sourceCardHooks['sharepoint_rh'] = function(cardEl, r) {
-  const title = cardEl.querySelector('.result-title');
-  if (title) title.textContent = '[RH] ' + title.textContent;
-};
-```
-
-Le hook reçoit :
-
-- `cardEl` : l'élément DOM `.result-card` déjà inséré dans la page (structure
-  détaillée dans `renderCard()`, `results.js`).
-- `r` : l'objet résultat brut (`id`, `title`, `source`, `filepath`, `author`,
-  `date_modified`, `score`, `highlight`, ...).
-
-Il est appelé par `applySourceCardHooks()` (`results.js`), juste après
-l'insertion des cartes dans le DOM, à chaque rendu de page de résultats.
-Chaque appel est isolé par un `try`/`catch` (erreur journalée en console) :
-une erreur dans un hook n'empêche pas l'affichage des autres cartes.
-
-⚠️ `custom-sources.js` est chargé après `constants.js` (qui déclare
-`sourceCardHooks`) — ne pas le renommer ni le déplacer sans mettre à jour
-l'ordre des `<script>` dans `index.html`.
-
-### Limite à connaître
-
-Ce mécanisme est pensé pour des **ajouts/modifications ponctuelles** sur une
-carte déjà rendue (texte, classes, éléments ajoutés), pas pour une
-restructuration complète. Pour une mise en page radicalement différente
-selon la source, il faudrait une fonction de rendu dédiée par source
-(duplication du gabarit de carte) — hors du périmètre de ce hook léger.
-
-## B.3 Vérifier
-
-Comme pour tout changement dans `docsearch-ui/public/` : reconstruire
-l'image (le `Dockerfile` recopie `public/` dedans à la construction, pas
-de bind-mount), puis vider le cache du navigateur avant de tester. Cette
-interface historique n'a plus d'unité systemd :
-
-```bash
-cd docsearch-ui
-podman build -t localhost/docsearch/ui:latest .
-sudo podman rm -f docsearch-ui 2>/dev/null
-sudo podman run -d --name docsearch-ui -p 8082:80 \
-  --network docsearch-net localhost/docsearch/ui:latest
-```

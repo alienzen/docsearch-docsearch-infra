@@ -4,22 +4,20 @@ on:
   push: { branches: [main, develop] }
   pull_request: { branches: [main] }
 
+# Ce workflow validait la syntaxe du docker-compose en clonant les dépôts
+# frères (pour résoudre les contextes de build). Il ne pouvait plus passer :
+# le fichier compose et `.env.example` sont partis avec la migration vers
+# podman + systemd (Quadlet), et l'un des dépôts clonés, `docsearch-ui`, est
+# archivé en bundle git. Les unités Quadlet ne se valident pas sans podman
+# ≥ 4.4 sur le runner ; on se limite donc à ce qui se vérifie sans
+# dépendance.
+
 jobs:
-  validate-compose:
+  lint-scripts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          path: docsearch-infra
-      # Clone les dépôts frères nécessaires à la résolution des build contexts
-      - uses: actions/checkout@v4
-        with: { repository: "${{ github.repository_owner }}/docsearch-ingestion", path: docsearch-ingestion }
-      - uses: actions/checkout@v4
-        with: { repository: "${{ github.repository_owner }}/docsearch-api", path: docsearch-api }
-      - uses: actions/checkout@v4
-        with: { repository: "${{ github.repository_owner }}/docsearch-ui", path: docsearch-ui }
-      - name: Validate compose syntax
-        working-directory: docsearch-infra
+      - name: Vérifier la syntaxe des scripts shell
         run: |
-          cp .env.example .env
-          docker compose config --quiet
+          bash -n manage.sh
+          bash -n quadlet/install-units.sh

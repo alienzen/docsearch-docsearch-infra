@@ -16,10 +16,44 @@ DocSearch est découpé en 6 dépôts indépendants :
 |---|---|---|
 | [docsearch-ingestion](../docsearch-ingestion) | Extraction, ACL, indexation | Évolue avec les formats de documents |
 | [docsearch-api](../docsearch-api) | API de recherche (FastAPI) | Évolue avec les besoins de recherche |
-| [docsearch-ui](../docsearch-ui) | Interface web statique | Évolue avec l'UX |
+| [docsearch-ui-vue](../docsearch-ui-vue) | Interface web (Vue 3 + DSFR) | Évolue avec l'UX |
 | **docsearch-infra** (ce dépôt) | Orchestration, déploiement | Évolue rarement |
 | [docsearch-docs](../docsearch-docs) | Documents commerciaux | Géré par les équipes commerciales |
-| [docsearch-dataset-generator](../docsearch-dataset-generator) | Génération de jeux de test | Utilisé ponctuellement, hors production |
+| `docsearch-dataset-generator` | Génération de jeux de test | Cloné à la demande, hors de la disposition ci-dessous |
+
+**Interface historique** — `docsearch-ui` (HTML/JS sans build) a été
+remplacée par `docsearch-ui-vue` et n'est plus clonée : son dépôt est
+archivé à la racine sous forme de bundle git, avec le stash resté en
+suspens (`../docsearch-ui-2026-08-10.bundle`,
+`../docsearch-ui-stash-2026-07-10.patch`). Elle n'a ni unité systemd ni
+service déclaré : la remobiliser en repli se fait entièrement à la main.
+
+```bash
+git clone ../docsearch-ui-2026-08-10.bundle ../docsearch-ui
+cd ../docsearch-ui
+sudo podman build -t localhost/docsearch/ui:latest .
+sudo podman run -d --name docsearch-ui -p 8082:80 \
+  --network docsearch-net localhost/docsearch/ui:latest
+```
+
+Le `sudo` de la construction est indispensable ici aussi (voir plus bas,
+« Reconstruire après modification d'un sous-projet »). Il reste ensuite à
+pointer l'amont `ui_backend` de [nginx/nginx.conf](nginx/nginx.conf) sur
+`docsearch-ui:80` — le 8082 ci-dessus est publié sur l'hôte, pas visible
+depuis le proxy — et à redémarrer `docsearch-nginx`, qui résout ses amonts
+au démarrage.
+
+Le bundle contient `main` et le stash (`refs/stash`), que `git clone` ne
+récupère pas — il faut aller le chercher, et il **entre en conflit** avec
+`main`, dont les derniers commits lui sont postérieurs. Le même contenu est
+fourni en clair dans `../docsearch-ui-stash-2026-07-10.patch`, qui ne
+s'applique pas tel quel sur `main` pour la même raison.
+
+```bash
+# depuis ../docsearch-ui
+git fetch ../docsearch-ui-2026-08-10.bundle 'refs/stash:refs/stash'
+git stash apply refs/stash   # conflits à résoudre
+```
 
 **Convention de clonage** — tous les dépôts doivent être clonés côte à côte
 dans un même dossier parent, car `./manage.sh build` construit les images
@@ -31,7 +65,7 @@ docsearch/
 ├── docsearch-infra/       ← vous êtes ici, lancez manage.sh depuis ce dossier
 ├── docsearch-ingestion/
 ├── docsearch-api/
-├── docsearch-ui/
+├── docsearch-ui-vue/
 └── docsearch-docs/
 ```
 
@@ -40,7 +74,7 @@ mkdir docsearch && cd docsearch
 git clone <url>/docsearch-infra.git
 git clone <url>/docsearch-ingestion.git
 git clone <url>/docsearch-api.git
-git clone <url>/docsearch-ui.git
+git clone <url>/docsearch-ui-vue.git
 git clone <url>/docsearch-docs.git
 
 cd docsearch-infra

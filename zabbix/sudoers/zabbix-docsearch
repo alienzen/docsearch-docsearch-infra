@@ -1,0 +1,27 @@
+# ─────────────────────────────────────────────────────────────
+#  /etc/sudoers.d/zabbix-docsearch   (mode 0440, root:root)
+#
+#  Trois sondes ont besoin de root, et uniquement pour cette raison :
+#  les unités Quadlet de production sont installées dans
+#  /etc/containers/systemd, donc pilotées par le podman ROOTFUL. Les
+#  conteneurs n'existent tout simplement pas pour l'utilisateur zabbix.
+#
+#  Ce qui est autorisé, ce sont TROIS SCRIPTS PRÉCIS, sans argument
+#  variable — pas "podman", pas un chemin à joker. Un
+#  "zabbix ALL=(root) NOPASSWD: /usr/bin/podman *" donnerait
+#  "podman run --privileged -v /:/hote", c'est-à-dire root complet.
+#
+#  Les scripts doivent appartenir à root et n'être modifiables que par
+#  lui (0755 root:root), faute de quoi l'utilisateur zabbix se donnerait
+#  root en réécrivant leur contenu. Vérifié par deployer-sondes.sh.
+#
+#  Installation : visudo -cf ce fichier AVANT de le copier en place.
+# ─────────────────────────────────────────────────────────────
+
+# Pas de "Defaults !requiretty" : ce réglage n'existe pas dans le sudo de
+# Debian (il vient des dérivés Red Hat, et sudo l'a retiré) — visudo
+# refuserait le fichier entier. Sudo n'exige pas de terminal ici.
+
+zabbix ALL=(root) NOPASSWD: /usr/local/bin/docsearch-zabbix-podman
+zabbix ALL=(root) NOPASSWD: /usr/local/bin/docsearch-zabbix-redis
+zabbix ALL=(root) NOPASSWD: /usr/local/bin/docsearch-zabbix-kafka

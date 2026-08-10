@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────
+#  docsearch-zabbix-horloge — synchronisation NTP (chrony)
+#
+#  Le guide d'installation (§5.2) insiste sur ce point : des horloges
+#  désynchronisées entre les 8 machines faussent date_created /
+#  date_modified à l'indexation et rendent la corrélation des journaux
+#  impossible. Un décalage ne provoque aucune panne visible — il se
+#  découvre des semaines plus tard, dans des résultats de recherche
+#  triés par date qui ne veulent rien dire.
+#
+#  Aucun privilège requis : "chronyc tracking" est en lecture seule.
+# ─────────────────────────────────────────────────────────────
+set -uo pipefail
+export LC_ALL=C
+
+# Format CSV de chronyc (-c) : refid,nom,strate,ref time,décalage système,
+# dernier décalage,rms,fréquence,freq résiduelle,dérive,root delay,
+# root dispersion,intervalle,état du saut.
+ligne=$(chronyc -c tracking 2>/dev/null)
+
+if [ -z "$ligne" ]; then
+    printf '{"synchronise":0,"strate":16,"decalage_s":0,"dispersion_s":0,"saut":"indisponible"}\n'
+    exit 0
+fi
+
+IFS=',' read -r _refid _nom strate _reftime decalage _dernier _rms \
+    _freq _freqres _derive _rootdelay rootdisp _interv saut <<< "$ligne"
+
+case "$strate" in ''|*[!0-9]*) strate=16 ;; esac
+
+# Strate 0 ou 16 = pas de source de temps valide. "Not synchronised" est
+# ce que chrony rend au démarrage et pendant une perte de source.
+synchronise=1
+[ "$strate" -eq 0 ] && synchronise=0
+[ "$strate" -ge 16 ] && synchronise=0
+[ "$saut" = "Not synchronised" ] && synchronise=0
+
+printf '{"synchronise":%d,"strate":%d,"decalage_s":%s,"dispersion_s":%s,"saut":"%s"}\n' \
+    "$synchronise" "$strate" "${decalage:-0}" "${rootdisp:-0}" "${saut:-inconnu}"

@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────
+#  docsearch-zabbix-podman — santé des conteneurs de la pile
+#
+#  Sortie : un tableau JSON, une entrée par conteneur "docsearch-*".
+#  Sert d'élément maître ET de source de découverte ; les champs sont
+#  nommés ordinairement, la règle de découverte fait la conversion en
+#  macros {#…} (voir docsearch-zabbix-unites pour le pourquoi).
+#
+#  ⚠️  À lancer en root (sudo) : les unités Quadlet de production sont
+#  installées dans /etc/containers/systemd, donc pilotées par le podman
+#  ROOTFUL. Les conteneurs n'existent pas pour l'utilisateur zabbix.
+#  Voir sudoers/zabbix-docsearch.
+#
+#  Pourquoi ce script en plus de l'état des unités systemd : un conteneur
+#  dont le HealthCmd échoue reste "active" côté systemd. Podman le marque
+#  "unhealthy" et ne redémarre rien — sans cette sonde, un Elasticsearch
+#  qui ne répond plus sur 9200 passerait pour un service en bonne santé.
+#  La consommation par conteneur, elle, ne passe PAS par "podman stats"
+#  (coûteux, et le nom des colonnes varie d'une version à l'autre) : elle
+#  est lue dans le cgroup de l'unité par docsearch-zabbix-unites.
+# ─────────────────────────────────────────────────────────────
+set -uo pipefail
+export LC_ALL=C
+
+PODMAN=${PODMAN:-/usr/bin/podman}
+
+echappe() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+premier=1
+printf '['
+while IFS=$'\t' read -r nom statut image; do
+    [ -z "$nom" ] && continue
+
+    # "Up 3 hours (healthy)" / "(unhealthy)" / "(starting)" / rien du tout
+    # quand l'unité ne déclare pas de HealthCmd (tika, kibana, nginx,
+    # ui-vue, workers) — d'où -1, « pas de sonde », et non 0, « malade ».
+    case "$statut" in
+        *"(healthy)"*)   sante=1 ;;
+        *"(unhealthy)"*) sante=0 ;;
+        *"(starting)"*)  sante=2 ;;
+        *)               sante=-1 ;;
+    esac
+
+    case "$statut" in
+        Up*) tourne=1 ;;
+        *)   tourne=0 ;;
+    esac
+
+    demarrages=$("$PODMAN" inspect --format '{{.RestartCount}}' "$nom" 2>/dev/null)
+    case "$demarrages" in ''|*[!0-9]*) demarrages=0 ;; esac
+
+    [ $premier -eq 0 ] && printf ','
+    premier=0
+    printf '{"nom":"%s","tourne":%d,"sante":%d,"demarrages":%d,"statut":"%s","image":"%s"}' \
+        "$(echappe "$nom")" "$tourne" "$sante" "$demarrages" \
+        "$(echappe "$statut")" "$(echappe "$image")"
+done < <("$PODMAN" ps --all --filter 'name=docsearch' \
+             --format '{{.Names}}\t{{.Status}}\t{{.Image}}' 2>/dev/null)
+printf ']\n'

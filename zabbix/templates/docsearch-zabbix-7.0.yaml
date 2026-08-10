@@ -1,0 +1,3109 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 'c8cd19c94002481d906881163277787b'
+      name: 'Templates/DocSearch'
+
+  templates:
+
+    # ═══════════════════════════════════════════════════════════
+    #  1. SOCLE — les 8 machines
+    #
+    #  Unités systemd de la pile, santé des conteneurs podman,
+    #  synchronisation NTP, réglages noyau. Tout ce qui est vrai quel
+    #  que soit le rôle de la machine.
+    #
+    #  À lier EN PLUS de "Linux by Zabbix agent" (fourni avec Zabbix),
+    #  qui couvre CPU, mémoire, disques, réseau et redémarrages. Ce
+    #  modèle-ci ne redéclare aucune de ses clés.
+    # ═══════════════════════════════════════════════════════════
+    - uuid: 'd04dae456dae46ff9960599ab9f55aa0'
+      template: 'DocSearch socle'
+      name: 'DocSearch socle'
+      description: |
+        Sondes communes aux 8 machines DocSearch : unités systemd (Quadlet),
+        conteneurs podman, horloge, vm.max_map_count.
+
+        Prérequis sur la machine : deployer-sondes.sh <rôle>.
+      groups:
+        - name: 'Templates/DocSearch'
+
+      macros:
+        - macro: '{$DOCSEARCH.UNITE.ATTENDUE}'
+          value: '1'
+          description: |
+            1 = l'unité doit tourner, 0 = arrêt normal. Se surcharge par unité
+            avec un contexte : {$DOCSEARCH.UNITE.ATTENDUE:"docsearch-xxx.service"}.
+        - macro: '{$DOCSEARCH.UNITE.ATTENDUE:"docsearch-alert-worker.service"}'
+          value: '0'
+          description: 'Sans [Install] dans son unité Quadlet : démarré sciemment ou pas du tout.'
+        - macro: '{$DOCSEARCH.UNITE.ATTENDUE:"docsearch-sql-worker.service"}'
+          value: '0'
+          description: 'À activer seulement si des sources SQL sont enregistrées.'
+        - macro: '{$DOCSEARCH.UNITE.ATTENDUE:"docsearch-web-worker.service"}'
+          value: '0'
+          description: 'À activer seulement si des sources web sont enregistrées.'
+        - macro: '{$DOCSEARCH.UNITE.REDEMARRAGES.MAX}'
+          value: '3'
+          description: 'Redémarrages tolérés sur 10 min avant de parler de boucle.'
+        - macro: '{$DOCSEARCH.NTP.DECALAGE.MAX}'
+          value: '1'
+          description: 'Décalage d''horloge toléré, en secondes.'
+        - macro: '{$DOCSEARCH.MAX_MAP_COUNT.MIN}'
+          value: '262144'
+
+      valuemaps:
+        - uuid: 'acb28fc871d24838b4d1f58c75b07c50'
+          name: 'Etat unite'
+          mappings:
+            - value: '0'
+              newvalue: 'Arrêtée'
+            - value: '1'
+              newvalue: 'Active'
+        - uuid: '3849f5501ea44de8be8113e4ae8bd1b4'
+          name: 'Sante conteneur'
+          mappings:
+            - value: '-1'
+              newvalue: 'Pas de sonde'
+            - value: '0'
+              newvalue: 'Malade'
+            - value: '1'
+              newvalue: 'Saine'
+            - value: '2'
+              newvalue: 'Démarrage'
+        - uuid: '5ed17cb3f6074f1abe956b1a75a86588'
+          name: 'Oui non'
+          mappings:
+            - value: '0'
+              newvalue: 'Non'
+            - value: '1'
+              newvalue: 'Oui'
+
+      items:
+
+        - uuid: '3e8cf1d6dc2a40f48cdcd20cc5c06b6a'
+          name: 'Unités systemd DocSearch : collecte'
+          key: 'docsearch.unites'
+          delay: 1m
+          history: 1h
+          trends: '0'
+          value_type: TEXT
+          description: |
+            Élément maître : un tableau JSON, une entrée par unité docsearch-*.
+            Toutes les sondes par unité en dépendent — une seule exécution par
+            intervalle quel que soit le nombre d'unités.
+          tags:
+            - tag: composant
+              value: systemd
+
+        - uuid: '28d949e7f6f44d169ebb25cd72c82f77'
+          name: 'Unités systemd en échec'
+          type: DEPENDENT
+          key: 'docsearch.unites.echouees'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.unites'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var u = JSON.parse(value), n = 0;
+                  for (var i = 0; i < u.length; i++) if (u[i].echoue == 1) n++;
+                  return n;
+          tags:
+            - tag: composant
+              value: systemd
+
+        - uuid: 'aa845b80aa3d413f8cab025dc293f238'
+          name: 'Workers d''indexation actifs sur cette machine'
+          type: DEPENDENT
+          key: 'docsearch.unites.workers'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.unites'
+          description: |
+            Nombre d'unités docsearch-worker-N actives. Agrégé au niveau du
+            modèle "DocSearch application" pour obtenir le total du cluster,
+            à comparer au nombre de partitions Kafka.
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var u = JSON.parse(value), n = 0;
+                  for (var i = 0; i < u.length; i++)
+                      if (/^docsearch-worker-[0-9]+\.service$/.test(u[i].nom) && u[i].actif == 1) n++;
+                  return n;
+          tags:
+            - tag: composant
+              value: ingestion
+
+        - uuid: '322647f519424e65bb581c67b7d446f6'
+          name: 'Conteneurs podman : collecte'
+          key: 'docsearch.conteneurs'
+          delay: 1m
+          history: 1h
+          trends: '0'
+          value_type: TEXT
+          description: |
+            Un conteneur dont le HealthCmd échoue reste "active" côté systemd :
+            podman le marque unhealthy et ne redémarre rien. Sans cette sonde,
+            un Elasticsearch qui ne répond plus sur 9200 passerait pour sain.
+          tags:
+            - tag: composant
+              value: podman
+
+        - uuid: 'd5caa3f0539246119be6c64b73a77ec9'
+          name: 'Conteneurs déclarés malades'
+          type: DEPENDENT
+          key: 'docsearch.conteneurs.malsains'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.conteneurs'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var c = JSON.parse(value), n = 0;
+                  for (var i = 0; i < c.length; i++) if (c[i].sante === 0) n++;
+                  return n;
+          tags:
+            - tag: composant
+              value: podman
+
+        - uuid: 'f11d1680f8194e66a5d2aa81d139dbb1'
+          name: 'Horloge : collecte'
+          key: 'docsearch.horloge'
+          delay: 5m
+          history: 1h
+          trends: '0'
+          value_type: TEXT
+          tags:
+            - tag: composant
+              value: systeme
+
+        - uuid: 'b09e585813514f1f962c85f878c1c4d1'
+          name: 'Horloge synchronisée'
+          type: DEPENDENT
+          key: 'docsearch.horloge.synchronise'
+          value_type: UNSIGNED
+          valuemap:
+            name: 'Oui non'
+          master_item:
+            key: 'docsearch.horloge'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.synchronise'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: systeme
+          triggers:
+            - uuid: 'aca3effd2ecd48569d70b8e45916de96'
+              expression: 'min(/DocSearch socle/docsearch.horloge.synchronise,10m)=0'
+              name: 'DocSearch : horloge non synchronisée'
+              priority: AVERAGE
+              description: |
+                chrony n'a plus de source de temps valide. Les dates d'indexation
+                (date_created, date_modified) et la corrélation des journaux entre
+                les 8 machines deviennent fausses, sans autre symptôme visible.
+              tags:
+                - tag: scope
+                  value: systeme
+
+        - uuid: 'c972ea3bc7de4cda9e3e058411033a87'
+          name: 'Décalage d''horloge'
+          type: DEPENDENT
+          key: 'docsearch.horloge.decalage'
+          value_type: FLOAT
+          units: s
+          master_item:
+            key: 'docsearch.horloge'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.decalage_s'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: systeme
+          triggers:
+            - uuid: 'd4a0978fd94544db8e047c742fc02170'
+              expression: 'abs(last(/DocSearch socle/docsearch.horloge.decalage))>{$DOCSEARCH.NTP.DECALAGE.MAX}'
+              name: 'DocSearch : décalage d''horloge supérieur à {$DOCSEARCH.NTP.DECALAGE.MAX} s'
+              priority: WARNING
+              tags:
+                - tag: scope
+                  value: systeme
+
+        - uuid: '59e02262bee74cdd81558edee4f1646e'
+          name: 'Strate NTP'
+          type: DEPENDENT
+          key: 'docsearch.horloge.strate'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.horloge'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.strate'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '16'
+          tags:
+            - tag: composant
+              value: systeme
+
+        - uuid: '0b923677aa2f4879b540cd406105a1ca'
+          name: 'vm.max_map_count'
+          key: 'docsearch.max_map_count'
+          delay: 1h
+          value_type: UNSIGNED
+          description: |
+            Requis par Elasticsearch, appliqué partout par le guide d'installation.
+            Un "sysctl -w" sans fichier dans /etc/sysctl.d retombe à la valeur par
+            défaut au redémarrage suivant, et le nœud ES refuse alors de démarrer.
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: composant
+              value: systeme
+          triggers:
+            - uuid: 'dedde5ee84334de5bc5848a4b4b559e5'
+              expression: 'last(/DocSearch socle/docsearch.max_map_count)<{$DOCSEARCH.MAX_MAP_COUNT.MIN}'
+              name: 'DocSearch : vm.max_map_count est retombé sous {$DOCSEARCH.MAX_MAP_COUNT.MIN}'
+              priority: AVERAGE
+              description: |
+                Vérifier que la ligne existe bien dans /etc/sysctl.d/99-docsearch.conf,
+                et pas seulement appliquée à chaud (§9.3 du guide d'installation).
+              tags:
+                - tag: scope
+                  value: systeme
+
+        - uuid: 'e345d572e2944ef19b3d9473cfcc9002'
+          name: 'Version de podman'
+          key: 'docsearch.podman.version'
+          delay: 1h
+          value_type: CHAR
+          description: 'Quadlet exige podman 4.4 minimum. Une mise à jour de distribution peut régresser.'
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: composant
+              value: podman
+          triggers:
+            - uuid: '0065e8d819854aee8bed8e454a56f8d9'
+              expression: 'change(/DocSearch socle/docsearch.podman.version)<>0 and length(last(/DocSearch socle/docsearch.podman.version))>0'
+              name: 'DocSearch : la version de podman a changé'
+              priority: INFO
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: podman
+
+      discovery_rules:
+
+        - uuid: '421433d3abe24b208772b821d913e453'
+          name: 'Unités systemd DocSearch'
+          type: DEPENDENT
+          key: 'docsearch.unites.decouverte'
+          description: 'Découverte des unités Quadlet présentes sur cette machine.'
+          master_item:
+            key: 'docsearch.unites'
+          lld_macro_paths:
+            - lld_macro: '{#UNITE}'
+              path: '$.nom'
+            - lld_macro: '{#COURT}'
+              path: '$.court'
+          item_prototypes:
+
+            - uuid: 'fd10a5ee4d0140f2a153d66995f6a838'
+              name: '{#COURT} : état'
+              type: DEPENDENT
+              key: 'docsearch.unite.actif[{#UNITE}]'
+              value_type: UNSIGNED
+              valuemap:
+                name: 'Etat unite'
+              master_item:
+                key: 'docsearch.unites'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - "$[?(@.nom=='{#UNITE}')].actif.first()"
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              tags:
+                - tag: composant
+                  value: systemd
+                - tag: unite
+                  value: '{#COURT}'
+
+            - uuid: '909ec8d2c5414b51b71619966f713d06'
+              name: '{#COURT} : en échec'
+              type: DEPENDENT
+              key: 'docsearch.unite.echoue[{#UNITE}]'
+              value_type: UNSIGNED
+              valuemap:
+                name: 'Oui non'
+              master_item:
+                key: 'docsearch.unites'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - "$[?(@.nom=='{#UNITE}')].echoue.first()"
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              tags:
+                - tag: composant
+                  value: systemd
+                - tag: unite
+                  value: '{#COURT}'
+
+            - uuid: '4868135db4974d9ab629d51e575b3f46'
+              name: '{#COURT} : redémarrages'
+              type: DEPENDENT
+              key: 'docsearch.unite.redemarrages[{#UNITE}]'
+              value_type: UNSIGNED
+              master_item:
+                key: 'docsearch.unites'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - "$[?(@.nom=='{#UNITE}')].redemarrages.first()"
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              tags:
+                - tag: composant
+                  value: systemd
+                - tag: unite
+                  value: '{#COURT}'
+
+            - uuid: '644e68d677c44a3fb67215f0a03cd274'
+              name: '{#COURT} : mémoire du cgroup'
+              type: DEPENDENT
+              key: 'docsearch.unite.memoire[{#UNITE}]'
+              value_type: UNSIGNED
+              units: B
+              master_item:
+                key: 'docsearch.unites'
+              description: |
+                Mémoire de l'unité, conteneur compris. C'est ce qui dit qu'un
+                worker approche de son plafond --memory=1g avant que le noyau
+                ne le tue (le symptôme serait un simple redémarrage inexpliqué).
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - "$[?(@.nom=='{#UNITE}')].memoire_octets.first()"
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              tags:
+                - tag: composant
+                  value: systemd
+                - tag: unite
+                  value: '{#COURT}'
+
+          trigger_prototypes:
+
+            - uuid: 'c459776d113943ad81131e36a71ff378'
+              expression: 'last(/DocSearch socle/docsearch.unite.echoue[{#UNITE}])=1'
+              name: 'DocSearch : l''unité {#UNITE} est en échec'
+              priority: HIGH
+              description: 'journalctl -u {#UNITE} -n 100'
+              tags:
+                - tag: scope
+                  value: systemd
+
+            - uuid: 'c08ded6a18bc472cba77e329c950030a'
+              expression: 'last(/DocSearch socle/docsearch.unite.actif[{#UNITE}])=0 and {$DOCSEARCH.UNITE.ATTENDUE:"{#UNITE}"}=1'
+              name: 'DocSearch : l''unité {#UNITE} est arrêtée'
+              priority: AVERAGE
+              description: |
+                Les unités volontairement à l'arrêt (alert-worker, sql-worker,
+                web-worker) sont exclues par la macro à contexte
+                {$DOCSEARCH.UNITE.ATTENDUE:"<unité>"} = 0.
+              dependencies:
+                - name: 'DocSearch : l''unité {#UNITE} est en échec'
+                  expression: 'last(/DocSearch socle/docsearch.unite.echoue[{#UNITE}])=1'
+              tags:
+                - tag: scope
+                  value: systemd
+
+            - uuid: 'c5934e2bb0104437b74cc2f55eec78a4'
+              expression: '(max(/DocSearch socle/docsearch.unite.redemarrages[{#UNITE}],10m)-min(/DocSearch socle/docsearch.unite.redemarrages[{#UNITE}],10m))>{$DOCSEARCH.UNITE.REDEMARRAGES.MAX}'
+              name: 'DocSearch : l''unité {#UNITE} redémarre en boucle'
+              priority: AVERAGE
+              description: |
+                Restart=always masque la panne : l'unité paraît active entre deux
+                chutes. Cause fréquente sur un worker : dépassement de --memory=1g.
+              tags:
+                - tag: scope
+                  value: systemd
+
+        - uuid: '2c947d503aac462db0bb9f047f1e7438'
+          name: 'Conteneurs podman DocSearch'
+          type: DEPENDENT
+          key: 'docsearch.conteneurs.decouverte'
+          master_item:
+            key: 'docsearch.conteneurs'
+          lld_macro_paths:
+            - lld_macro: '{#CONTENEUR}'
+              path: '$.nom'
+          item_prototypes:
+
+            - uuid: 'f08b42c85113412f946870059f7bf4e2'
+              name: '{#CONTENEUR} : santé podman'
+              type: DEPENDENT
+              key: 'docsearch.conteneur.sante[{#CONTENEUR}]'
+              value_type: UNSIGNED
+              valuemap:
+                name: 'Sante conteneur'
+              master_item:
+                key: 'docsearch.conteneurs'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - "$[?(@.nom=='{#CONTENEUR}')].sante.first()"
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '-1'
+              tags:
+                - tag: composant
+                  value: podman
+                - tag: conteneur
+                  value: '{#CONTENEUR}'
+
+            - uuid: '102df28cf8f645d6a35e91f5d58b540c'
+              name: '{#CONTENEUR} : en fonctionnement'
+              type: DEPENDENT
+              key: 'docsearch.conteneur.tourne[{#CONTENEUR}]'
+              value_type: UNSIGNED
+              valuemap:
+                name: 'Oui non'
+              master_item:
+                key: 'docsearch.conteneurs'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - "$[?(@.nom=='{#CONTENEUR}')].tourne.first()"
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              tags:
+                - tag: composant
+                  value: podman
+                - tag: conteneur
+                  value: '{#CONTENEUR}'
+
+          trigger_prototypes:
+            - uuid: 'd9d46eab48944bbf814384c70c6e4630'
+              expression: 'min(/DocSearch socle/docsearch.conteneur.sante[{#CONTENEUR}],3m)=0'
+              name: 'DocSearch : podman déclare {#CONTENEUR} en mauvaise santé'
+              priority: HIGH
+              description: |
+                Le HealthCmd de l'unité échoue depuis 3 minutes. systemd, lui, voit
+                toujours l'unité "active" : podman ne redémarre pas un conteneur
+                unhealthy. Diagnostic : podman healthcheck run {#CONTENEUR}
+              tags:
+                - tag: scope
+                  value: podman
+
+    # ═══════════════════════════════════════════════════════════
+    #  2. NŒUD ELASTICSEARCH — es-data-1, es-data-2, es-voting
+    #
+    #  Uniquement ce qui est PROPRE AU NŒUD (JVM, disque, rôles,
+    #  verrouillage mémoire). L'état du cluster, lui, est une propriété
+    #  du cluster : il est relevé une seule fois, par le modèle
+    #  "DocSearch application". Le relever ici le ferait sonner trois
+    #  fois pour une seule panne.
+    # ═══════════════════════════════════════════════════════════
+    - uuid: 'bbb993ba21234957a94cbb04dd0bd05a'
+      template: 'DocSearch noeud Elasticsearch'
+      name: 'DocSearch noeud Elasticsearch'
+      description: |
+        Sondes par nœud Elasticsearch. Interrogation HTTP directe sur 9200
+        (xpack.security.enabled=false) : aucun agent requis pour ces éléments.
+      groups:
+        - name: 'Templates/DocSearch'
+
+      macros:
+        - macro: '{$DOCSEARCH.ES.URL}'
+          value: 'http://{HOST.CONN}:9200'
+        - macro: '{$DOCSEARCH.ES.HEAP.CRIT}'
+          value: '90'
+        - macro: '{$DOCSEARCH.ES.HEAP.AVERT}'
+          value: '75'
+        - macro: '{$DOCSEARCH.ES.DISQUE.MIN}'
+          value: '15'
+          description: 'Pourcentage d''espace libre en dessous duquel alerter. ES bloque les écritures à 5 %.'
+        - macro: '{$DOCSEARCH.ES.ROLE.ATTENDU}'
+          value: 'data'
+          description: 'Poser "voting_only" sur l''hôte es-voting.'
+
+      valuemaps:
+        - uuid: '1764e34d0fc44fdfabe735eb84182da3'
+          name: 'Oui non'
+          mappings:
+            - value: '0'
+              newvalue: 'Non'
+            - value: '1'
+              newvalue: 'Oui'
+
+      items:
+
+        - uuid: '6330f38d33f64351829a012706feeaf5'
+          name: 'ES nœud : statistiques'
+          type: HTTP_AGENT
+          key: 'es.noeud.stats'
+          url: '{$DOCSEARCH.ES.URL}/_nodes/_local/stats'
+          delay: 1m
+          timeout: 15s
+          history: 1h
+          trends: '0'
+          value_type: TEXT
+          tags:
+            - tag: composant
+              value: elasticsearch
+
+        - uuid: '691eb05f65b845688dd0909a06f0dda7'
+          name: 'ES nœud : occupation du tas JVM'
+          type: DEPENDENT
+          key: 'es.noeud.heap.pct'
+          value_type: FLOAT
+          units: '%'
+          master_item:
+            key: 'es.noeud.stats'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.nodes.*.jvm.mem.heap_used_percent.first()'
+          tags:
+            - tag: composant
+              value: elasticsearch
+          triggers:
+            - uuid: '634ea870a7bf41c0b89f00a56ece66a6'
+              expression: 'min(/DocSearch noeud Elasticsearch/es.noeud.heap.pct,10m)>{$DOCSEARCH.ES.HEAP.CRIT}'
+              name: 'ES : tas JVM au-dessus de {$DOCSEARCH.ES.HEAP.CRIT} % depuis 10 min'
+              priority: HIGH
+              description: |
+                Au-delà de 90 %, le ramasse-miettes tourne en continu et le nœud
+                devient très lent avant de se faire éjecter du cluster. Le tas est
+                fixé dans /etc/docsearch/elasticsearch.env (7 Go pour 16 Go de RAM).
+              tags:
+                - tag: scope
+                  value: elasticsearch
+            - uuid: '61a0f3a5ff304694b8a38ec78fb518ac'
+              expression: 'min(/DocSearch noeud Elasticsearch/es.noeud.heap.pct,30m)>{$DOCSEARCH.ES.HEAP.AVERT}'
+              name: 'ES : tas JVM au-dessus de {$DOCSEARCH.ES.HEAP.AVERT} % depuis 30 min'
+              priority: WARNING
+              dependencies:
+                - name: 'ES : tas JVM au-dessus de {$DOCSEARCH.ES.HEAP.CRIT} % depuis 10 min'
+                  expression: 'min(/DocSearch noeud Elasticsearch/es.noeud.heap.pct,10m)>{$DOCSEARCH.ES.HEAP.CRIT}'
+              tags:
+                - tag: scope
+                  value: elasticsearch
+
+        - uuid: 'd4d84bedee2546e79e22bfba3f344b10'
+          name: 'ES nœud : temps passé en GC old'
+          type: DEPENDENT
+          key: 'es.noeud.gc.old'
+          value_type: FLOAT
+          units: 'ms/s'
+          master_item:
+            key: 'es.noeud.stats'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.nodes.*.jvm.gc.collectors.old.collection_time_in_millis.first()'
+            - type: CHANGE_PER_SECOND
+          tags:
+            - tag: composant
+              value: elasticsearch
+          triggers:
+            - uuid: 'e89353b661e949c1afab6db4825d1147'
+              expression: 'min(/DocSearch noeud Elasticsearch/es.noeud.gc.old,15m)>100'
+              name: 'ES : plus de 10 % du temps passé en ramasse-miettes'
+              priority: AVERAGE
+              description: 'Signe avant-coureur classique d''un tas sous-dimensionné ou d''une requête trop lourde.'
+              tags:
+                - tag: scope
+                  value: elasticsearch
+
+        - uuid: '5b1a651aadb44a98ab1a6ce2f214106c'
+          name: 'ES nœud : espace disque libre'
+          type: DEPENDENT
+          key: 'es.noeud.disque.libre'
+          value_type: UNSIGNED
+          units: B
+          master_item:
+            key: 'es.noeud.stats'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.nodes.*.fs.total.available_in_bytes.first()'
+          tags:
+            - tag: composant
+              value: elasticsearch
+
+        - uuid: '67cd979b81d64cb7bcfe44ab3accf6e1'
+          name: 'ES nœud : espace disque libre en pourcentage'
+          type: DEPENDENT
+          key: 'es.noeud.disque.pct'
+          value_type: FLOAT
+          units: '%'
+          master_item:
+            key: 'es.noeud.stats'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var d = JSON.parse(value);
+                  var k = Object.keys(d.nodes)[0];
+                  var f = d.nodes[k].fs.total;
+                  return f.total_in_bytes > 0 ? f.available_in_bytes * 100 / f.total_in_bytes : 0;
+          tags:
+            - tag: composant
+              value: elasticsearch
+          triggers:
+            - uuid: '1b9b4da8824a4b8bade22eab1f323e2f'
+              expression: 'last(/DocSearch noeud Elasticsearch/es.noeud.disque.pct)<{$DOCSEARCH.ES.DISQUE.MIN}'
+              name: 'ES : moins de {$DOCSEARCH.ES.DISQUE.MIN} % d''espace disque libre'
+              priority: HIGH
+              description: |
+                À 85 % d'occupation Elasticsearch cesse d'allouer de nouveaux shards
+                sur ce nœud, à 90 % il en déplace, à 95 % il passe TOUS les index en
+                lecture seule — l'indexation s'arrête alors sans que rien d'autre ne
+                le signale (voir la sonde "index passés en lecture seule").
+              tags:
+                - tag: scope
+                  value: elasticsearch
+
+        - uuid: '23545a66576f4743bee9fe7261a30c65'
+          name: 'ES nœud : écritures rejetées'
+          type: DEPENDENT
+          key: 'es.noeud.ecritures.rejetees'
+          value_type: FLOAT
+          units: '/s'
+          master_item:
+            key: 'es.noeud.stats'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.nodes.*.thread_pool.write.rejected.first()'
+            - type: CHANGE_PER_SECOND
+          tags:
+            - tag: composant
+              value: elasticsearch
+          triggers:
+            - uuid: 'e1bf873dbc1f477f89b6f91645ef438a'
+              expression: 'min(/DocSearch noeud Elasticsearch/es.noeud.ecritures.rejetees,5m)>0'
+              name: 'ES : le nœud rejette des écritures'
+              priority: AVERAGE
+              description: |
+                La file d'écriture est pleine : les workers d'ingestion voient leurs
+                lots refusés. Réduire WORKER_BATCH_SIZE ou le nombre de workers.
+              tags:
+                - tag: scope
+                  value: elasticsearch
+
+        - uuid: '7f36b6a9f7854609a39d08a570733951'
+          name: 'ES nœud : recherches rejetées'
+          type: DEPENDENT
+          key: 'es.noeud.recherches.rejetees'
+          value_type: FLOAT
+          units: '/s'
+          master_item:
+            key: 'es.noeud.stats'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.nodes.*.thread_pool.search.rejected.first()'
+            - type: CHANGE_PER_SECOND
+          tags:
+            - tag: composant
+              value: elasticsearch
+
+        - uuid: '75e5badddaa247e884b38ecf86f1d8f5'
+          name: 'ES nœud : débit d''indexation'
+          type: DEPENDENT
+          key: 'es.noeud.indexation.debit'
+          value_type: FLOAT
+          units: 'doc/s'
+          master_item:
+            key: 'es.noeud.stats'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.nodes.*.indices.indexing.index_total.first()'
+            - type: CHANGE_PER_SECOND
+          tags:
+            - tag: composant
+              value: elasticsearch
+
+        - uuid: 'f68f2c8fabd941b2965b8fb0b4b4e747'
+          name: 'ES nœud : débit de recherche'
+          type: DEPENDENT
+          key: 'es.noeud.recherche.debit'
+          value_type: FLOAT
+          units: '/s'
+          master_item:
+            key: 'es.noeud.stats'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.nodes.*.indices.search.query_total.first()'
+            - type: CHANGE_PER_SECOND
+          tags:
+            - tag: composant
+              value: elasticsearch
+
+        - uuid: 'cf3258536ac84ef59e843a86bd8d1511'
+          name: 'ES nœud : documents stockés'
+          type: DEPENDENT
+          key: 'es.noeud.documents'
+          value_type: UNSIGNED
+          master_item:
+            key: 'es.noeud.stats'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.nodes.*.indices.docs.count.first()'
+          tags:
+            - tag: composant
+              value: elasticsearch
+
+        - uuid: '2c4feacea9da4c7fb15f3b403a35d33b'
+          name: 'ES nœud : segments'
+          type: DEPENDENT
+          key: 'es.noeud.segments'
+          value_type: UNSIGNED
+          master_item:
+            key: 'es.noeud.stats'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.nodes.*.indices.segments.count.first()'
+          tags:
+            - tag: composant
+              value: elasticsearch
+
+        - uuid: '33fba4dec56742ac8003f793bdcc726f'
+          name: 'ES nœud : disjoncteur parent déclenché'
+          type: DEPENDENT
+          key: 'es.noeud.disjoncteur'
+          value_type: UNSIGNED
+          master_item:
+            key: 'es.noeud.stats'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.nodes.*.breakers.parent.tripped.first()'
+          tags:
+            - tag: composant
+              value: elasticsearch
+          triggers:
+            - uuid: 'd7f5f35e883d4733a680fb8f9d15e88b'
+              expression: 'change(/DocSearch noeud Elasticsearch/es.noeud.disjoncteur)>0'
+              name: 'ES : le disjoncteur mémoire s''est déclenché'
+              priority: AVERAGE
+              manual_close: 'YES'
+              description: 'Des requêtes ont été refusées pour protéger le tas. Recherche ou agrégation trop lourde.'
+              tags:
+                - tag: scope
+                  value: elasticsearch
+
+        - uuid: '9cdef12eb50544ddb73c37f11bbaa1cf'
+          name: 'ES nœud : descripteurs de fichiers ouverts'
+          type: DEPENDENT
+          key: 'es.noeud.descripteurs'
+          value_type: UNSIGNED
+          master_item:
+            key: 'es.noeud.stats'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.nodes.*.process.open_file_descriptors.first()'
+          tags:
+            - tag: composant
+              value: elasticsearch
+
+        - uuid: '832c24b5b82a4e5c98bee1d25275277f'
+          name: 'ES nœud : identité'
+          type: HTTP_AGENT
+          key: 'es.noeud.info'
+          url: '{$DOCSEARCH.ES.URL}/_nodes/_local'
+          delay: 10m
+          timeout: 15s
+          history: 1h
+          trends: '0'
+          value_type: TEXT
+          tags:
+            - tag: composant
+              value: elasticsearch
+
+        - uuid: 'dc6f699855eb421fa442aa757f9efe01'
+          name: 'ES nœud : nom'
+          type: DEPENDENT
+          key: 'es.noeud.nom'
+          value_type: CHAR
+          master_item:
+            key: 'es.noeud.info'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.nodes.*.name.first()'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: composant
+              value: elasticsearch
+          triggers:
+            - uuid: '21752752665e472194f80811e8c0d3ca'
+              expression: 'change(/DocSearch noeud Elasticsearch/es.noeud.nom)<>0 and length(last(/DocSearch noeud Elasticsearch/es.noeud.nom))>0'
+              name: 'ES : le nom du nœud a changé'
+              priority: WARNING
+              manual_close: 'YES'
+              description: |
+                node.name vient de /etc/docsearch/elasticsearch.env, et doit être
+                UNIQUE dans le cluster : deux nœuds du même nom refusent de se
+                joindre. Un changement ici veut dire que ce fichier a bougé.
+              tags:
+                - tag: scope
+                  value: elasticsearch
+
+        - uuid: 'd29da41a9a49485b9fae897d77ebf8b5'
+          name: 'ES nœud : rôles'
+          type: DEPENDENT
+          key: 'es.noeud.roles'
+          value_type: TEXT
+          master_item:
+            key: 'es.noeud.info'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.nodes.*.roles.first()'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: composant
+              value: elasticsearch
+          triggers:
+            - uuid: 'ce81cb4c5ab440d7b2682c0350b133bc'
+              expression: 'find(/DocSearch noeud Elasticsearch/es.noeud.roles,,"like","{$DOCSEARCH.ES.ROLE.ATTENDU}")=0'
+              name: 'ES : ce nœud n''a pas le rôle attendu ({$DOCSEARCH.ES.ROLE.ATTENDU})'
+              priority: HIGH
+              description: |
+                node.roles ne correspond pas à ce qu'attend l'architecture. Cause la
+                plus fréquente : elasticsearch.env recopié d'une machine à l'autre
+                sans adaptation. Poser {$DOCSEARCH.ES.ROLE.ATTENDU}=voting_only sur
+                l'hôte es-voting.
+              tags:
+                - tag: scope
+                  value: elasticsearch
+
+        - uuid: '29b34cfdee46414eb248b7cdb5fc1565'
+          name: 'ES nœud : version'
+          type: DEPENDENT
+          key: 'es.noeud.version'
+          value_type: CHAR
+          master_item:
+            key: 'es.noeud.info'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.nodes.*.version.first()'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: composant
+              value: elasticsearch
+
+        - uuid: '09b10ebf5cfb42a99f3e053acba02804'
+          name: 'ES nœud : tas verrouillé en mémoire'
+          type: DEPENDENT
+          key: 'es.noeud.memlock'
+          value_type: UNSIGNED
+          valuemap:
+            name: 'Oui non'
+          master_item:
+            key: 'es.noeud.info'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.nodes.*.process.mlockall.first()'
+            - type: BOOL_TO_DECIMAL
+          tags:
+            - tag: composant
+              value: elasticsearch
+          triggers:
+            - uuid: '9075ac3a467244b09bd8e6607039852e'
+              expression: 'last(/DocSearch noeud Elasticsearch/es.noeud.memlock)=0'
+              name: 'ES : le tas JVM n''est PAS verrouillé en mémoire'
+              priority: HIGH
+              description: |
+                bootstrap.memory_lock=true est demandé dans elasticsearch.env mais
+                n'a pas pris : il manque --ulimit=memlock=-1:-1 sur le conteneur, ou
+                la limite système l'interdit. Panne silencieuse : le nœud démarre et
+                fonctionne, mais son tas peut partir en swap, avec des pauses GC de
+                plusieurs secondes pour seul symptôme.
+              tags:
+                - tag: scope
+                  value: elasticsearch
+
+        - uuid: 'e9a01af35c7f4a51bafe7d518ebc5f26'
+          name: 'ES nœud : swap total'
+          key: 'system.swap.size[all,total]'
+          delay: 10m
+          value_type: UNSIGNED
+          units: B
+          description: |
+            Clé distincte de celle du modèle "Linux by Zabbix agent"
+            (system.swap.size[,total]) pour pouvoir cohabiter avec lui sur le
+            même hôte. Le guide impose swapoff -a sur les 3 machines ES.
+          tags:
+            - tag: composant
+              value: elasticsearch
+          triggers:
+            - uuid: 'e328124d606340d790abd93ad0df078e'
+              expression: 'last(/DocSearch noeud Elasticsearch/system.swap.size[all,total])>0'
+              name: 'ES : le swap est actif sur un nœud Elasticsearch'
+              priority: AVERAGE
+              description: |
+                Le guide impose swapoff -a et le retrait de la ligne swap de
+                /etc/fstab sur es-data-1, es-data-2 et es-voting. Un swap réactivé
+                après réinstallation ou mise à jour du noyau se voit ici.
+              tags:
+                - tag: scope
+                  value: elasticsearch
+
+    # ═══════════════════════════════════════════════════════════
+    #  3. ARBITRE + KIBANA — es-voting
+    # ═══════════════════════════════════════════════════════════
+    - uuid: '7e991ce042654ab1924337a3acbf5750'
+      template: 'DocSearch arbitre et Kibana'
+      name: 'DocSearch arbitre et Kibana'
+      description: |
+        Sondes propres à la machine es-voting : Kibana. Le nœud Elasticsearch
+        lui-même est couvert par "DocSearch noeud Elasticsearch", à lier aussi
+        sur cet hôte (avec {$DOCSEARCH.ES.ROLE.ATTENDU}=voting_only).
+      groups:
+        - name: 'Templates/DocSearch'
+
+      macros:
+        - macro: '{$DOCSEARCH.KIBANA.URL}'
+          value: 'http://{HOST.CONN}:5601'
+
+      valuemaps:
+        - uuid: '20587bd43d3441fc985f7b24b70e9c06'
+          name: 'Niveau Kibana'
+          mappings:
+            - value: '0'
+              newvalue: 'Disponible'
+            - value: '1'
+              newvalue: 'Dégradé'
+            - value: '2'
+              newvalue: 'Indisponible'
+            - value: '3'
+              newvalue: 'Critique'
+
+      items:
+
+        - uuid: 'fc8cf4d11ba744b4983166fe66428f65'
+          name: 'Kibana : état'
+          type: HTTP_AGENT
+          key: 'kibana.statut'
+          url: '{$DOCSEARCH.KIBANA.URL}/api/status'
+          delay: 2m
+          timeout: 15s
+          history: 1h
+          trends: '0'
+          value_type: TEXT
+          tags:
+            - tag: composant
+              value: kibana
+
+        - uuid: '8c96052331334006b81d5c2daf4f20ef'
+          name: 'Kibana : niveau global'
+          type: DEPENDENT
+          key: 'kibana.niveau'
+          value_type: UNSIGNED
+          valuemap:
+            name: 'Niveau Kibana'
+          master_item:
+            key: 'kibana.statut'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var d = JSON.parse(value);
+                  var n = d.status && d.status.overall ? d.status.overall.level : 'unavailable';
+                  var t = {available: 0, degraded: 1, unavailable: 2, critical: 3};
+                  return t[n] === undefined ? 2 : t[n];
+          tags:
+            - tag: composant
+              value: kibana
+          triggers:
+            - uuid: '98c6ddee65eb4eb383f9c13f7fd6fc1c'
+              expression: 'min(/DocSearch arbitre et Kibana/kibana.niveau,10m)>=2'
+              name: 'Kibana : indisponible'
+              priority: WARNING
+              description: |
+                Kibana ne sert qu'à l'exploitation : ni la recherche ni l'indexation
+                n'en dépendent. D'où WARNING et non HIGH.
+              tags:
+                - tag: scope
+                  value: kibana
+            - uuid: 'f55816040c2c45a99816cc6e3657c622'
+              expression: 'min(/DocSearch arbitre et Kibana/kibana.niveau,15m)=1'
+              name: 'Kibana : dégradé'
+              priority: INFO
+              tags:
+                - tag: scope
+                  value: kibana
+
+        - uuid: '25480c3336bb4afe9109dbc8e8545689'
+          name: 'Kibana : version'
+          type: DEPENDENT
+          key: 'kibana.version'
+          value_type: CHAR
+          master_item:
+            key: 'kibana.statut'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.version.number'
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: composant
+              value: kibana
+
+        - uuid: 'fa96952b5148456f9ab084a2d891dc7e'
+          name: 'Kibana : port 5601'
+          type: SIMPLE
+          key: 'net.tcp.service[tcp,,5601]'
+          delay: 2m
+          value_type: UNSIGNED
+          tags:
+            - tag: composant
+              value: kibana
+
+    # ═══════════════════════════════════════════════════════════
+    #  4. KAFKA — machine kafka
+    # ═══════════════════════════════════════════════════════════
+    - uuid: 'ea44df5fdc2e45a6b02098f4de208877'
+      template: 'DocSearch Kafka'
+      name: 'DocSearch Kafka'
+      description: |
+        File de travail de l'indexation. Broker unique en KRaft : sa perte
+        arrête l'INDEXATION, jamais la RECHERCHE — les messages de la priorité
+        des déclencheurs le disent explicitement.
+      groups:
+        - name: 'Templates/DocSearch'
+
+      macros:
+        - macro: '{$DOCSEARCH.KAFKA.RETARD.MAX}'
+          value: '50000'
+          description: 'Documents en attente d''indexation au-delà desquels alerter.'
+
+      valuemaps:
+        - uuid: 'f8a499abf9674d4a93298000bf7021e3'
+          name: 'Oui non'
+          mappings:
+            - value: '0'
+              newvalue: 'Non'
+            - value: '1'
+              newvalue: 'Oui'
+
+      items:
+
+        - uuid: '618ccb236a514c55a1bbf21e7092325f'
+          name: 'Kafka : file d''indexation'
+          key: 'docsearch.kafka.file'
+          delay: 2m
+          history: 1h
+          trends: '0'
+          value_type: TEXT
+          description: |
+            Topic, partitions, membres du groupe de consumers et retard total,
+            mesurés SUR le broker. Les mêmes chiffres apparaissent dans
+            /admin/status côté frontend, mais ceux-ci ne dépendent ni de l'API,
+            ni d'Elasticsearch, ni d'une session valide.
+          tags:
+            - tag: composant
+              value: kafka
+
+        - uuid: '0a3985560e67481c88594e72bc406a89'
+          name: 'Kafka : broker joignable'
+          type: DEPENDENT
+          key: 'docsearch.kafka.broker'
+          value_type: UNSIGNED
+          valuemap:
+            name: 'Oui non'
+          master_item:
+            key: 'docsearch.kafka.file'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.broker'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: kafka
+          triggers:
+            - uuid: '31eca9e1dbd847ffb3a6aee9c721d056'
+              expression: 'min(/DocSearch Kafka/docsearch.kafka.broker,5m)=0'
+              name: 'Kafka : broker injoignable — l''indexation est arrêtée'
+              priority: HIGH
+              description: |
+                Point de défaillance unique assumé de l'architecture (§2.2 du guide).
+                L'INDEXATION de nouveaux documents s'arrête ; la RECHERCHE continue
+                de fonctionner normalement, elle ne dépend ni de Kafka ni des
+                machines d'ingestion. Les documents non publiés seront rattrapés au
+                prochain scan complet.
+              tags:
+                - tag: scope
+                  value: kafka
+
+        - uuid: 'd3b4d859804b4470aae551354aa1e952'
+          name: 'Kafka : topic présent'
+          type: DEPENDENT
+          key: 'docsearch.kafka.topic'
+          value_type: UNSIGNED
+          valuemap:
+            name: 'Oui non'
+          master_item:
+            key: 'docsearch.kafka.file'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.topic_present'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: kafka
+          triggers:
+            - uuid: 'd0ddcee4e8b640e18a061a9048a2c455'
+              expression: 'last(/DocSearch Kafka/docsearch.kafka.broker)=1 and last(/DocSearch Kafka/docsearch.kafka.topic)=0'
+              name: 'Kafka : le topic documents-to-index n''existe pas'
+              priority: HIGH
+              description: 'Le broker répond mais le topic a disparu : volume de données perdu, ou broker réinitialisé.'
+              tags:
+                - tag: scope
+                  value: kafka
+
+        - uuid: '6e406b91f23a40bca1bb9302e54e2f45'
+          name: 'Kafka : partitions du topic'
+          type: DEPENDENT
+          key: 'docsearch.kafka.partitions'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.kafka.file'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.partitions'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: kafka
+
+        - uuid: 'c401ae5f08ea4bd7a752b529d674e85b'
+          name: 'Kafka : workers dans le groupe de consumers'
+          type: DEPENDENT
+          key: 'docsearch.kafka.membres'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.kafka.file'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.membres'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: kafka
+          triggers:
+            - uuid: '2bd911a3bde9483294d0bbf232889067'
+              expression: 'last(/DocSearch Kafka/docsearch.kafka.broker)=1 and min(/DocSearch Kafka/docsearch.kafka.membres,10m)=0'
+              name: 'Kafka : aucun worker ne consomme la file'
+              priority: HIGH
+              description: |
+                Le broker va bien mais plus aucun worker des 3 machines d'ingestion
+                n'est membre du groupe. Rien n'est indexé, et rien d'autre ne le dit.
+              tags:
+                - tag: scope
+                  value: ingestion
+            - uuid: 'ff85be275fbf44e9901ee892b1f76569'
+              expression: 'last(/DocSearch Kafka/docsearch.kafka.partitions)>0 and last(/DocSearch Kafka/docsearch.kafka.membres)>last(/DocSearch Kafka/docsearch.kafka.partitions)'
+              name: 'Kafka : plus de workers que de partitions'
+              priority: WARNING
+              description: |
+                Le parallélisme est plafonné par le nombre de partitions
+                (KAFKA_NUM_PARTITIONS, 16 par défaut) : les workers en trop ne
+                reçoivent jamais de partition et restent inactifs (§9.2 du guide).
+              tags:
+                - tag: scope
+                  value: ingestion
+
+        - uuid: '119ef9a40ef243b7a633c4b59a137508'
+          name: 'Kafka : partitions assignées'
+          type: DEPENDENT
+          key: 'docsearch.kafka.assignees'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.kafka.file'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.partitions_assignees'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: kafka
+
+        - uuid: '7f19a5feffb3479a97775477447aab6e'
+          name: 'Kafka : documents en attente d''indexation'
+          type: DEPENDENT
+          key: 'docsearch.kafka.retard'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.kafka.file'
+          description: 'Somme du lag sur toutes les partitions : l''avancement réel de l''indexation.'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.retard'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: ingestion
+          triggers:
+            - uuid: 'cfe2619daca541edaa928ea5ee5bcb45'
+              expression: 'min(/DocSearch Kafka/docsearch.kafka.retard,30m)>{$DOCSEARCH.KAFKA.RETARD.MAX}'
+              name: 'Kafka : retard d''indexation supérieur à {$DOCSEARCH.KAFKA.RETARD.MAX} documents depuis 30 min'
+              priority: WARNING
+              description: |
+                Normal pendant un scan complet (manage.sh init) : la file se remplit
+                d'un coup puis se vide. Anormal en régime établi — vérifier que les
+                workers consomment (docsearch.kafka.membres) et que Tika répond.
+              tags:
+                - tag: scope
+                  value: ingestion
+
+        - uuid: '08c897d499b941bd9908cf71fc9b78dc'
+          name: 'Kafka : retard de la partition la plus en retard'
+          type: DEPENDENT
+          key: 'docsearch.kafka.retard.max'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.kafka.file'
+          description: |
+            Un retard concentré sur une seule partition alors que le total est
+            faible désigne un worker bloqué, pas une surcharge générale.
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.retard_max_partition'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: ingestion
+
+        - uuid: '95a27458200f43f0a2394df003cb8639'
+          name: 'Kafka : port 9092'
+          type: SIMPLE
+          key: 'net.tcp.service[tcp,,9092]'
+          delay: 1m
+          value_type: UNSIGNED
+          tags:
+            - tag: composant
+              value: kafka
+
+    # ═══════════════════════════════════════════════════════════
+    #  5. FRONTEND — Nginx, API, Redis, interface
+    #
+    #  Le modèle le plus fourni : c'est la machine par laquelle passe
+    #  tout ce que voit l'utilisateur, et celle qui héberge la sonde
+    #  applicative agrégée (/admin/status).
+    # ═══════════════════════════════════════════════════════════
+    - uuid: 'a8d6623763b1418cae67d067d11e74b6'
+      template: 'DocSearch frontend'
+      name: 'DocSearch frontend'
+      description: |
+        Sondes de la machine frontend : chaîne HTTPS complète, API de recherche,
+        Redis, certificat TLS, et l'état agrégé de toute l'application via
+        /admin/status.
+
+        Prérequis : deployer-sondes.sh frontend, puis renseigner
+        /etc/zabbix/docsearch-supervision.conf (compte local de supervision).
+      groups:
+        - name: 'Templates/DocSearch'
+
+      macros:
+        - macro: '{$DOCSEARCH.SOURCES.CHEMIN}'
+          value: '/data/docsearch-sources'
+        - macro: '{$DOCSEARCH.RECHERCHE.MS.MAX}'
+          value: '2000'
+        - macro: '{$DOCSEARCH.CERT.JOURS.AVERT}'
+          value: '30'
+        - macro: '{$DOCSEARCH.CERT.JOURS.CRIT}'
+          value: '7'
+        - macro: '{$DOCSEARCH.REDIS.MEMOIRE.MAX}'
+          value: '85'
+        - macro: '{$DOCSEARCH.WATCHER.SILENCE.MAX}'
+          value: '180'
+          description: 'Le watcher bat toutes les WATCHER_POLL_INTERVAL secondes, TTL 120 s.'
+        - macro: '{$DOCSEARCH.INDEXATION.RETARD.MAX}'
+          value: '50000'
+
+      valuemaps:
+        - uuid: 'd4911481433f4bb7b72a86d6fc3fbff7'
+          name: 'Oui non'
+          mappings:
+            - value: '0'
+              newvalue: 'Non'
+            - value: '1'
+              newvalue: 'Oui'
+
+      items:
+
+        # ── Chaîne HTTP ────────────────────────────────────────
+        - uuid: 'dd7a097bf06f4bd89a20faa5fecbd85e'
+          name: 'API : /health (port 8000 en direct)'
+          key: 'docsearch.api.sante'
+          delay: 1m
+          history: 1h
+          trends: '0'
+          value_type: TEXT
+          tags:
+            - tag: composant
+              value: api
+
+        - uuid: '70989e9c5c2a48bb9893dc4ddc1e6d8e'
+          name: 'API : code HTTP de /health'
+          type: DEPENDENT
+          key: 'docsearch.api.sante.http'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.api.sante'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.http'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: api
+          triggers:
+            - uuid: '7600f5fbf57440daa7fe379aeaddb4a6'
+              expression: 'min(/DocSearch frontend/docsearch.api.sante.http,3m)<>200'
+              name: 'DocSearch : l''API ne répond plus'
+              priority: DISASTER
+              description: |
+                /health répond 503 dès qu'Elasticsearch est injoignable DEPUIS l'API.
+                Attention : ES_HOST ne liste qu'un seul hôte (es-data-1). Si ce nœud
+                tombe, l'API perd son point d'entrée MÊME SI le cluster reste vert
+                sur les autres nœuds (§2.3 du guide).
+                0 = l'API n'écoute plus du tout sur 8000.
+              tags:
+                - tag: scope
+                  value: api
+
+        - uuid: '5e55bfaeccfa41b2aad6b9c73c219f5d'
+          name: 'API : temps de réponse de /health'
+          type: DEPENDENT
+          key: 'docsearch.api.sante.temps'
+          value_type: UNSIGNED
+          units: ms
+          master_item:
+            key: 'docsearch.api.sante'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.temps_ms'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: api
+
+        - uuid: 'fc92da15c8c448eb819001c3c118bb3f'
+          name: 'API : version déployée'
+          type: DEPENDENT
+          key: 'docsearch.api.version'
+          value_type: CHAR
+          master_item:
+            key: 'docsearch.api.sante'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.donnees.version'
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: composant
+              value: api
+
+        - uuid: 'cb58ee13ca6843c4b3903cd6c78d36fa'
+          name: 'API : version d''Elasticsearch vue par l''API'
+          type: DEPENDENT
+          key: 'docsearch.api.es_version'
+          value_type: CHAR
+          master_item:
+            key: 'docsearch.api.sante'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.donnees.es_version'
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: composant
+              value: api
+
+        - uuid: '2eee40a8d49e4c6e9dabca6724e479d4'
+          name: 'Interface : redirection de la racine'
+          key: 'docsearch.api.web'
+          delay: 1m
+          history: 1h
+          trends: '0'
+          value_type: TEXT
+          tags:
+            - tag: composant
+              value: nginx
+
+        - uuid: 'db3bdd86816a4918bf8e9898ffc25b62'
+          name: 'Interface : code HTTP de la racine'
+          type: DEPENDENT
+          key: 'docsearch.api.web.http'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.api.web'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.http'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: nginx
+          triggers:
+            - uuid: 'e7310e261229487f972b1566d9577a7a'
+              expression: 'min(/DocSearch frontend/docsearch.api.web.http,3m)=0'
+              name: 'Nginx : la chaîne HTTPS ne répond plus'
+              priority: DISASTER
+              description: 'Ni TLS ni proxy : Nginx est tombé, ou le certificat est illisible.'
+              tags:
+                - tag: scope
+                  value: nginx
+            - uuid: 'c7c5a796bd8048769fc88ba7c99fd08d'
+              expression: 'last(/DocSearch frontend/docsearch.api.web.http)=200'
+              name: 'Nginx : la racine répond 200 au lieu de rediriger vers /connexion'
+              priority: HIGH
+              description: |
+                L'accès anonyme n'existe plus : la racine doit répondre 302 vers
+                /connexion. Un 200 signifie que le contrôle d'accès de l'interface
+                a sauté (auth_request de docsearch-ui-vue).
+              tags:
+                - tag: scope
+                  value: securite
+
+        - uuid: 'b5ca01e66161426fa0c9ac0533ae5a76'
+          name: 'Interface : temps de réponse de la racine'
+          type: DEPENDENT
+          key: 'docsearch.api.web.temps'
+          value_type: UNSIGNED
+          units: ms
+          master_item:
+            key: 'docsearch.api.web'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.temps_ms'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: nginx
+
+        # ── Recherche de bout en bout ──────────────────────────
+        - uuid: '5e717b7c30654a7296f8e937ac32a29c'
+          name: 'Recherche : sonde de bout en bout'
+          key: 'docsearch.api.recherche'
+          delay: 1m
+          history: 1h
+          trends: '0'
+          value_type: TEXT
+          description: |
+            Une vraie recherche, avec une vraie session : TLS → Nginx → API →
+            contrôle d'accès → filtrage ACL → Elasticsearch → agrégations.
+            La seule sonde qui mesure ce que l'utilisateur ressent.
+          tags:
+            - tag: composant
+              value: recherche
+
+        - uuid: '31c84cc86f9648f5b2c2325d1ed65741'
+          name: 'Recherche : code HTTP'
+          type: DEPENDENT
+          key: 'docsearch.api.recherche.http'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.api.recherche'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.http'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: recherche
+          triggers:
+            - uuid: '5ea8e533cb354f06bd9a062e81a0668f'
+              expression: 'min(/DocSearch frontend/docsearch.api.recherche.http,3m)<>200'
+              name: 'DocSearch : la recherche ne fonctionne plus'
+              priority: DISASTER
+              description: |
+                Codes à distinguer : 401/403 le compte de supervision a perdu ses
+                droits ou son mot de passe a changé ; 503 annuaire, Redis ou clés de
+                signature indisponibles ; 429 limite de débit atteinte (l''intervalle
+                de la sonde est passé sous 2 s) ; 0 rien ne répond.
+              tags:
+                - tag: scope
+                  value: recherche
+
+        - uuid: 'c01c99b37ede4c999d35b7ad40b6a93e'
+          name: 'Recherche : temps de réponse'
+          type: DEPENDENT
+          key: 'docsearch.api.recherche.temps'
+          value_type: UNSIGNED
+          units: ms
+          master_item:
+            key: 'docsearch.api.recherche'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.temps_ms'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: recherche
+          triggers:
+            - uuid: 'a1e3dcf2a64345b1a234c9d785ee849d'
+              expression: 'min(/DocSearch frontend/docsearch.api.recherche.temps,10m)>{$DOCSEARCH.RECHERCHE.MS.MAX}'
+              name: 'DocSearch : la recherche met plus de {$DOCSEARCH.RECHERCHE.MS.MAX} ms depuis 10 min'
+              priority: WARNING
+              tags:
+                - tag: scope
+                  value: recherche
+
+        - uuid: 'aaac9527651149e2b454acdb816ed9bf'
+          name: 'Recherche : résultats de la requête témoin'
+          type: DEPENDENT
+          key: 'docsearch.api.recherche.resultats'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.api.recherche'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.donnees.total'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: recherche
+          triggers:
+            - uuid: '874a3128f9124baba0633f2973505065'
+              expression: 'last(/DocSearch frontend/docsearch.api.recherche.http)=200 and max(/DocSearch frontend/docsearch.api.recherche.resultats,10m)=0'
+              name: 'DocSearch : la requête témoin ne ramène plus aucun résultat'
+              priority: HIGH
+              description: |
+                L'API répond 200 mais l'index ne rend plus rien. Alias fédéré cassé,
+                index purgé, ou filtrage ACL qui exclut désormais tout pour le compte
+                de supervision. Choisir dans docsearch-supervision.conf une requête
+                témoin dont on sait qu'elle ramène toujours des résultats.
+              tags:
+                - tag: scope
+                  value: recherche
+
+        # ── Authentification ───────────────────────────────────
+        - uuid: 'd789032268d5478586cf284c0099cec3'
+          name: 'Authentification : trousseau de signature'
+          key: 'docsearch.api.jwks'
+          delay: 5m
+          history: 1h
+          trends: '0'
+          value_type: TEXT
+          tags:
+            - tag: composant
+              value: authentification
+
+        - uuid: 'd7e0b5509ec54b4aa9005f40684697b4'
+          name: 'Authentification : code HTTP de /auth/.well-known/jwks.json'
+          type: DEPENDENT
+          key: 'docsearch.api.jwks.http'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.api.jwks'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.http'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: authentification
+          triggers:
+            - uuid: 'c1b8f4c381c0448daffde42ab870edc2'
+              expression: 'min(/DocSearch frontend/docsearch.api.jwks.http,5m)<>200'
+              name: 'DocSearch : les clés de signature ne sont pas lisibles'
+              priority: HIGH
+              description: |
+                Plus aucune connexion n'est possible : /auth/login répond 503.
+                Piège documenté (§6.4 du guide) — /etc/docsearch/jwt est monté en
+                lecture seule et ses permissions sont interprétées avec l'UID MAPPÉ
+                dans le conteneur : un fichier parfaitement lisible côté hôte peut
+                rester illisible dedans.
+              tags:
+                - tag: scope
+                  value: authentification
+
+        # ── Certificat TLS ─────────────────────────────────────
+        - uuid: '01a69d82c8d74840879898d296849027'
+          name: 'TLS : certificat de Nginx'
+          key: 'docsearch.api.certificat'
+          delay: 6h
+          history: 7d
+          trends: '0'
+          value_type: TEXT
+          tags:
+            - tag: composant
+              value: nginx
+
+        - uuid: '5f474c89e0ac4086a75075af3a393e4c'
+          name: 'TLS : jours avant expiration du certificat'
+          type: DEPENDENT
+          key: 'docsearch.api.certificat.jours'
+          value_type: FLOAT
+          units: j
+          master_item:
+            key: 'docsearch.api.certificat'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.donnees.jours_restants'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '-1'
+          tags:
+            - tag: composant
+              value: nginx
+          triggers:
+            - uuid: '77e7162abfd848fe9704cf65d1ec1333'
+              expression: 'last(/DocSearch frontend/docsearch.api.certificat.jours)<{$DOCSEARCH.CERT.JOURS.CRIT} and last(/DocSearch frontend/docsearch.api.certificat.jours)>=0'
+              name: 'TLS : le certificat expire dans moins de {$DOCSEARCH.CERT.JOURS.CRIT} jours'
+              priority: HIGH
+              description: |
+                Le guide fait générer un certificat AUTO-SIGNÉ valable 365 jours.
+                Sans renouvellement, l'application devient inaccessible un an jour
+                pour jour après la mise en service.
+                Renouveler : openssl req -x509 ... puis systemctl restart docsearch-nginx
+              tags:
+                - tag: scope
+                  value: nginx
+            - uuid: '6706a45b60b24da8b399bf8732b104a0'
+              expression: 'last(/DocSearch frontend/docsearch.api.certificat.jours)<{$DOCSEARCH.CERT.JOURS.AVERT} and last(/DocSearch frontend/docsearch.api.certificat.jours)>=0'
+              name: 'TLS : le certificat expire dans moins de {$DOCSEARCH.CERT.JOURS.AVERT} jours'
+              priority: WARNING
+              dependencies:
+                - name: 'TLS : le certificat expire dans moins de {$DOCSEARCH.CERT.JOURS.CRIT} jours'
+                  expression: 'last(/DocSearch frontend/docsearch.api.certificat.jours)<{$DOCSEARCH.CERT.JOURS.CRIT} and last(/DocSearch frontend/docsearch.api.certificat.jours)>=0'
+              tags:
+                - tag: scope
+                  value: nginx
+
+        - uuid: '8e67c9e73cdd49a7aee0c7f911686015'
+          name: 'TLS : date d''expiration'
+          type: DEPENDENT
+          key: 'docsearch.api.certificat.date'
+          value_type: CHAR
+          master_item:
+            key: 'docsearch.api.certificat'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.donnees.expire_le'
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 7d
+          tags:
+            - tag: composant
+              value: nginx
+
+        # ── État applicatif agrégé ─────────────────────────────
+        - uuid: 'a836247b0b08448488d4090e66676ebd'
+          name: 'Application : /admin/status'
+          key: 'docsearch.api.etat'
+          delay: 1m
+          history: 1h
+          trends: '0'
+          value_type: TEXT
+          description: |
+            L'état de TOUS les composants en un appel : ES, Redis, Tika, Kafka,
+            workers, retard d'indexation, battement du watcher, versions
+            déployées, documents par source.
+          tags:
+            - tag: composant
+              value: application
+
+        - uuid: '6f3c7e6dcc0e4bc997e69771653c6474'
+          name: 'Application : code HTTP de /admin/status'
+          type: DEPENDENT
+          key: 'docsearch.etat.http'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.api.etat'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.http'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: application
+          triggers:
+            - uuid: 'd071282a76f34afb9d926d83ba18a577'
+              expression: 'min(/DocSearch frontend/docsearch.etat.http,5m)=403'
+              name: 'Supervision : le compte de sonde n''est plus administrateur'
+              priority: WARNING
+              description: |
+                La session s'ouvre mais /admin/status est refusé : svc-supervision a
+                perdu docsearch-admins. Toutes les sondes applicatives agrégées sont
+                aveugles tant que ce n'est pas corrigé.
+              tags:
+                - tag: scope
+                  value: supervision
+
+        - uuid: 'd5d5570e2439415881a7c5cd9f0f434b'
+          name: 'Application : Elasticsearch joignable depuis l''API'
+          type: DEPENDENT
+          key: 'docsearch.etat.es'
+          value_type: UNSIGNED
+          valuemap:
+            name: 'Oui non'
+          master_item:
+            key: 'docsearch.api.etat'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.donnees.elasticsearch.up'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: 'false'
+            - type: BOOL_TO_DECIMAL
+          tags:
+            - tag: composant
+              value: application
+
+        - uuid: '7b7665d2f1164e8eb8f9a741fb29ea74'
+          name: 'Application : Redis joignable depuis l''API'
+          type: DEPENDENT
+          key: 'docsearch.etat.redis'
+          value_type: UNSIGNED
+          valuemap:
+            name: 'Oui non'
+          master_item:
+            key: 'docsearch.api.etat'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.donnees.redis.up'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: 'false'
+            - type: BOOL_TO_DECIMAL
+          tags:
+            - tag: composant
+              value: application
+
+        - uuid: '274e278eaec34d0ebd336911174dad15'
+          name: 'Application : instances Tika répondant'
+          type: DEPENDENT
+          key: 'docsearch.etat.tika.actives'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.api.etat'
+          description: |
+            Vu de l'API, donc à travers TIKA_SERVERS : c'est la liste RÉELLEMENT
+            utilisée par les workers. Un serveur Tika démarré mais absent de cette
+            liste n'aide personne, et un serveur listé mais mort fait échouer une
+            extraction sur N.
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.donnees.tika.up_count'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: ingestion
+
+        - uuid: '566bdae840df4b7981f9995e2444c7a5'
+          name: 'Application : instances Tika déclarées'
+          type: DEPENDENT
+          key: 'docsearch.etat.tika.total'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.api.etat'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.donnees.tika.total'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: ingestion
+          triggers:
+            - uuid: '10f7bcd7920c4603839b4896df162730'
+              expression: 'last(/DocSearch frontend/docsearch.etat.tika.total)>0 and min(/DocSearch frontend/docsearch.etat.tika.actives,10m)=0'
+              name: 'Ingestion : plus aucune instance Tika ne répond'
+              priority: HIGH
+              description: 'Aucun document ne peut plus être extrait. L''indexation est à l''arrêt complet.'
+              tags:
+                - tag: scope
+                  value: ingestion
+            - uuid: '156f5d62211e4cb1acf3b72978195450'
+              expression: 'last(/DocSearch frontend/docsearch.etat.tika.actives)<last(/DocSearch frontend/docsearch.etat.tika.total) and last(/DocSearch frontend/docsearch.etat.tika.actives)>0'
+              name: 'Ingestion : une instance Tika de TIKA_SERVERS ne répond pas'
+              priority: WARNING
+              description: 'Une extraction sur N échoue. Identifier laquelle dans /admin/status.'
+              tags:
+                - tag: scope
+                  value: ingestion
+
+        - uuid: 'ec7c888544244c9c984d1a3e75a78d18'
+          name: 'Application : workers actifs (vu de Kafka)'
+          type: DEPENDENT
+          key: 'docsearch.etat.workers'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.api.etat'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.donnees.workers.active_workers'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: ingestion
+
+        - uuid: '192958fb12674bb5954bfad9c4d7f41d'
+          name: 'Application : documents en attente d''indexation'
+          type: DEPENDENT
+          key: 'docsearch.etat.attente'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.api.etat'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.donnees.workers.pending_documents'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: ingestion
+          triggers:
+            - uuid: 'ac994fb14800451c9e7f618a58ecf2d7'
+              expression: 'min(/DocSearch frontend/docsearch.etat.attente,30m)>{$DOCSEARCH.INDEXATION.RETARD.MAX} and max(/DocSearch frontend/docsearch.etat.workers,30m)=0'
+              name: 'Ingestion : des documents attendent et aucun worker ne consomme'
+              priority: HIGH
+              description: |
+                La file se remplit sans être consommée. Distinct d'un simple retard :
+                ici personne ne travaille. Vérifier les unités docsearch-worker-* des
+                3 machines d'ingestion.
+              tags:
+                - tag: scope
+                  value: ingestion
+
+        - uuid: '231ea43a1a024196b32e872c8d33d1fd'
+          name: 'Application : silence du watcher'
+          type: DEPENDENT
+          key: 'docsearch.etat.watcher.silence'
+          value_type: FLOAT
+          units: s
+          master_item:
+            key: 'docsearch.api.etat'
+          description: |
+            Âge du dernier battement de cœur écrit dans Redis par le watcher
+            d'ingest-1. TTL de 120 s côté Redis : au-delà, la clé disparaît et
+            l'API ne rend plus de valeur — d'où le repli à 999.
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.donnees.watcher.last_seen_seconds_ago'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '999'
+          tags:
+            - tag: composant
+              value: ingestion
+          triggers:
+            - uuid: 'adc135ac43eb476480b956b5e15be810'
+              expression: 'min(/DocSearch frontend/docsearch.etat.watcher.silence,5m)>{$DOCSEARCH.WATCHER.SILENCE.MAX}'
+              name: 'Ingestion : le watcher ne bat plus'
+              priority: HIGH
+              description: |
+                Plus aucune détection temps réel des nouveaux documents : ils ne
+                seront indexés qu'au prochain scan complet (manage.sh init).
+                Service singleton, sur ingest-1 uniquement.
+              tags:
+                - tag: scope
+                  value: ingestion
+
+        - uuid: 'b43794dc68174e7e9efabd10d8a92686'
+          name: 'Application : version de l''ingestion'
+          type: DEPENDENT
+          key: 'docsearch.etat.version.ingestion'
+          value_type: CHAR
+          master_item:
+            key: 'docsearch.api.etat'
+          description: |
+            Rapportée par le battement du watcher, donc celle d'ingest-1
+            seulement. Pendant une mise à jour machine par machine, elle ne dit
+            rien de la version des workers d'ingest-2 et ingest-3.
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.donnees.versions.ingestion.version'
+              error_handler: DISCARD_VALUE
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: composant
+              value: ingestion
+
+        # ── Volumétrie ─────────────────────────────────────────
+        - uuid: '312020a1b52f4afabf91f3ec86bdd5cc'
+          name: 'Application : /metrics'
+          key: 'docsearch.api.metriques'
+          delay: 10m
+          history: 1h
+          trends: '0'
+          value_type: TEXT
+          tags:
+            - tag: composant
+              value: application
+
+        - uuid: '33c1b34294c04e258ca39ba1cdfc20a6'
+          name: 'Application : documents indexés'
+          type: DEPENDENT
+          key: 'docsearch.metriques.documents'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.api.metriques'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.donnees.indexed'
+              error_handler: DISCARD_VALUE
+          tags:
+            - tag: composant
+              value: application
+
+        - uuid: 'afd095b8f6954afba8d684ed6d70b89e'
+          name: 'Application : volume indexé'
+          type: DEPENDENT
+          key: 'docsearch.metriques.taille'
+          value_type: FLOAT
+          units: GB
+          master_item:
+            key: 'docsearch.api.metriques'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.donnees.size_gb'
+              error_handler: DISCARD_VALUE
+          tags:
+            - tag: composant
+              value: application
+
+        # ── Redis ──────────────────────────────────────────────
+        - uuid: '7e0db88669bc4eb1bc25f31c25d182d2'
+          name: 'Redis : collecte'
+          key: 'docsearch.redis'
+          delay: 1m
+          history: 1h
+          trends: '0'
+          value_type: TEXT
+          tags:
+            - tag: composant
+              value: redis
+
+        - uuid: '480f5ffc13494056a0342bb7a0381280'
+          name: 'Redis : joignable'
+          type: DEPENDENT
+          key: 'docsearch.redis.joignable'
+          value_type: UNSIGNED
+          valuemap:
+            name: 'Oui non'
+          master_item:
+            key: 'docsearch.redis'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.joignable'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: redis
+          triggers:
+            - uuid: '910ae36203af4035ad2fd78557d5d55b'
+              expression: 'min(/DocSearch frontend/docsearch.redis.joignable,3m)=0'
+              name: 'Redis : injoignable'
+              priority: HIGH
+              description: |
+                Redis porte les registres de sources, la configuration à chaud, les
+                sessions et les compteurs de limitation de débit. Sans lui, /auth
+                répond 503 et plus personne ne se connecte.
+              tags:
+                - tag: scope
+                  value: redis
+
+        - uuid: '543cb3c51bae4cb19576c80b8aaca0ae'
+          name: 'Redis : clés évincées'
+          type: DEPENDENT
+          key: 'docsearch.redis.evictions'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.redis'
+          description: |
+            Compteur cumulé depuis le démarrage. Redis tourne avec
+            --maxmemory-policy allkeys-lru : cette politique n'épargne AUCUNE
+            clé — ni le registre des sources, ni la configuration à chaud, ni
+            les sessions ouvertes.
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.evictions'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: redis
+          triggers:
+            - uuid: '3438541bc7954e34ac730005989c45fc'
+              expression: 'change(/DocSearch frontend/docsearch.redis.evictions)>0'
+              name: 'Redis : des clés ont été évincées'
+              priority: HIGH
+              manual_close: 'YES'
+              description: |
+                Une seule éviction est un événement grave, pas une statistique :
+                allkeys-lru peut faire disparaître le registre des sources, un
+                filtre de chemins ou une session, sans aucune trace ailleurs.
+                Relever --maxmemory, ou purger ce qui a grossi (historiques de
+                recherche, alertes).
+              tags:
+                - tag: scope
+                  value: redis
+
+        - uuid: '37d02c33069d400d9f0d6da8ae413347'
+          name: 'Redis : occupation mémoire'
+          type: DEPENDENT
+          key: 'docsearch.redis.memoire.pct'
+          value_type: FLOAT
+          units: '%'
+          master_item:
+            key: 'docsearch.redis'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.memoire_pct'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: redis
+          triggers:
+            - uuid: 'bbb0bf2b198b48b6969afcdd56c70adf'
+              expression: 'min(/DocSearch frontend/docsearch.redis.memoire.pct,15m)>{$DOCSEARCH.REDIS.MEMOIRE.MAX}'
+              name: 'Redis : plus de {$DOCSEARCH.REDIS.MEMOIRE.MAX} % de maxmemory utilisés'
+              priority: WARNING
+              description: 'Avertissement avant les premières évictions. Agir maintenant coûte moins cher.'
+              tags:
+                - tag: scope
+                  value: redis
+
+        - uuid: 'a52eb3d5863445648efdcd3cf4eb524f'
+          name: 'Redis : mémoire utilisée'
+          type: DEPENDENT
+          key: 'docsearch.redis.memoire'
+          value_type: UNSIGNED
+          units: B
+          master_item:
+            key: 'docsearch.redis'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.memoire_utilisee'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: redis
+
+        - uuid: '55726c315d85492394e5b984c91ff67a'
+          name: 'Redis : dernière sauvegarde RDB réussie'
+          type: DEPENDENT
+          key: 'docsearch.redis.rdb'
+          value_type: UNSIGNED
+          valuemap:
+            name: 'Oui non'
+          master_item:
+            key: 'docsearch.redis'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.rdb_ok'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '1'
+          tags:
+            - tag: composant
+              value: redis
+          triggers:
+            - uuid: '0508d7c0f1084fd0b1805cd7fdeb3a4d'
+              expression: 'min(/DocSearch frontend/docsearch.redis.rdb,10m)=0'
+              name: 'Redis : la sauvegarde sur disque échoue'
+              priority: AVERAGE
+              description: |
+                Le volume redis-data ne reçoit plus de snapshot : au prochain
+                redémarrage du conteneur, les registres de sources et la
+                configuration à chaud repartiraient dans l'état du dernier
+                snapshot réussi. Cause habituelle : disque plein.
+              tags:
+                - tag: scope
+                  value: redis
+
+        - uuid: 'fdf7d98e2a9741c5912d22b24c93b7a4'
+          name: 'Redis : registre des sources fichier présent'
+          type: DEPENDENT
+          key: 'docsearch.redis.registre.sources'
+          value_type: UNSIGNED
+          valuemap:
+            name: 'Oui non'
+          master_item:
+            key: 'docsearch.redis'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.registre_file_sources'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: redis
+          triggers:
+            - uuid: '4d22af04f0d74bf8a953207ef2d5fc76'
+              expression: 'last(/DocSearch frontend/docsearch.redis.joignable)=1 and min(/DocSearch frontend/docsearch.redis.registre.sources,5m)=0'
+              name: 'DocSearch : le registre des sources a disparu de Redis'
+              priority: DISASTER
+              description: |
+                docsearch:config:file_sources n'existe plus alors que Redis répond.
+                Plus aucune source n'est déclarée : ni indexation, ni facette de
+                source, ni aperçu. Causes : éviction LRU, FLUSHDB, ou volume
+                redis-data reparti à vide.
+              tags:
+                - tag: scope
+                  value: redis
+
+        - uuid: 'd8f9e1e6a09046d3a6c7b39cd385557f'
+          name: 'Redis : clients connectés'
+          type: DEPENDENT
+          key: 'docsearch.redis.clients'
+          value_type: UNSIGNED
+          master_item:
+            key: 'docsearch.redis'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.clients'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: redis
+
+        - uuid: '1babfc198aff452097b384faa95642fb'
+          name: 'Redis : silence du worker SQL'
+          type: DEPENDENT
+          key: 'docsearch.redis.battement.sql'
+          value_type: FLOAT
+          units: s
+          master_item:
+            key: 'docsearch.redis'
+          description: '-1 = aucun battement (worker SQL non démarré, ce qui est le cas par défaut).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.battement_sql_worker_s'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '-1'
+          tags:
+            - tag: composant
+              value: ingestion
+
+        - uuid: 'cf4331c3872542abab8df0362d0cbcc5'
+          name: 'Redis : silence du worker web'
+          type: DEPENDENT
+          key: 'docsearch.redis.battement.web'
+          value_type: FLOAT
+          units: s
+          master_item:
+            key: 'docsearch.redis'
+          description: '-1 = aucun battement (worker web non démarré, ce qui est le cas par défaut).'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.battement_web_worker_s'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '-1'
+          tags:
+            - tag: composant
+              value: ingestion
+
+        # ── Partage des sources (aperçu de document) ───────────
+        - uuid: '337ea9bf9aef47dea468f246567c42b9'
+          name: 'Sources : montage {$DOCSEARCH.SOURCES.CHEMIN}'
+          key: 'docsearch.montage[{$DOCSEARCH.SOURCES.CHEMIN}]'
+          delay: 5m
+          history: 1h
+          trends: '0'
+          value_type: TEXT
+          tags:
+            - tag: composant
+              value: sources
+
+        - uuid: '6772fa1ce50b49e5bf057aed2f4619fe'
+          name: 'Sources : partage monté'
+          type: DEPENDENT
+          key: 'docsearch.montage.monte'
+          value_type: UNSIGNED
+          valuemap:
+            name: 'Oui non'
+          master_item:
+            key: 'docsearch.montage[{$DOCSEARCH.SOURCES.CHEMIN}]'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.monte'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: sources
+          triggers:
+            - uuid: 'f76c7ffdaa0f4990afdfa452055c404e'
+              expression: 'min(/DocSearch frontend/docsearch.montage.monte,10m)=0'
+              name: 'Sources : le partage réseau n''est plus monté'
+              priority: AVERAGE
+              description: |
+                Sur frontend, ce partage sert l'aperçu de document (conversion
+                Office → PDF) : les aperçus échouent, la recherche continue.
+              tags:
+                - tag: scope
+                  value: sources
+
+        - uuid: '1df7904871a148e48e567c781981d09c'
+          name: 'Sources : partage lisible'
+          type: DEPENDENT
+          key: 'docsearch.montage.lisible'
+          value_type: UNSIGNED
+          valuemap:
+            name: 'Oui non'
+          master_item:
+            key: 'docsearch.montage[{$DOCSEARCH.SOURCES.CHEMIN}]'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.lisible'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: sources
+
+        # ── Ports ──────────────────────────────────────────────
+        - uuid: 'e517867277bc4ef6857a6c3b8c0bb557'
+          name: 'Nginx : port 443'
+          type: SIMPLE
+          key: 'net.tcp.service[tcp,,443]'
+          delay: 1m
+          value_type: UNSIGNED
+          description: 'Contrôle TCP simple : la validité du certificat auto-signé est vérifiée à part.'
+          tags:
+            - tag: composant
+              value: nginx
+
+        - uuid: '3e337b23e6f84fa79e5ef0ff9823b839'
+          name: 'Nginx : port 80'
+          type: SIMPLE
+          key: 'net.tcp.service[tcp,,80]'
+          delay: 5m
+          value_type: UNSIGNED
+          tags:
+            - tag: composant
+              value: nginx
+
+        - uuid: 'ffa1db7ce70f42b6837c2b512b13fc2c'
+          name: 'API : port 8000'
+          type: SIMPLE
+          key: 'net.tcp.service[tcp,,8000]'
+          delay: 1m
+          value_type: UNSIGNED
+          tags:
+            - tag: composant
+              value: api
+
+        - uuid: 'e65d024f91414a609c3e6b6df577d157'
+          name: 'Redis : port 6379'
+          type: SIMPLE
+          key: 'net.tcp.service[tcp,,6379]'
+          delay: 1m
+          value_type: UNSIGNED
+          description: |
+            Interrogé depuis le serveur Zabbix : c'est le chemin qu'empruntent les
+            workers des 3 machines d'ingestion pour lire la configuration à chaud.
+            Un pare-feu qui se referme se voit ici et nulle part ailleurs.
+          tags:
+            - tag: composant
+              value: redis
+
+      discovery_rules:
+
+        - uuid: '85cca5dc0f5e407ab597b970f3aad29c'
+          name: 'Sources DocSearch'
+          type: DEPENDENT
+          key: 'docsearch.sources.decouverte'
+          description: |
+            Une entrée par source enregistrée (fichier, SQL, web). /admin/status
+            rend un objet indexé par nom : converti ici en tableau, seule forme
+            que la découverte de bas niveau sait lire.
+          master_item:
+            key: 'docsearch.api.etat'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var d = JSON.parse(value);
+                  var s = (d.donnees && d.donnees.sources) ? d.donnees.sources : {};
+                  var r = [];
+                  for (var nom in s) {
+                      r.push({nom: nom,
+                              index_es: s[nom].es_index || '',
+                              libelle: s[nom].label || nom});
+                  }
+                  return JSON.stringify(r);
+          lld_macro_paths:
+            - lld_macro: '{#SOURCE}'
+              path: '$.nom'
+            - lld_macro: '{#INDEX_ES}'
+              path: '$.index_es'
+            - lld_macro: '{#LIBELLE}'
+              path: '$.libelle'
+          item_prototypes:
+            - uuid: 'b5203560201348d6abd38ba14aa48d59'
+              name: 'Source {#LIBELLE} : documents indexés'
+              type: DEPENDENT
+              key: 'docsearch.source.documents[{#SOURCE}]'
+              value_type: UNSIGNED
+              master_item:
+                key: 'docsearch.api.etat'
+              preprocessing:
+                - type: JSONPATH
+                  parameters:
+                    - "$.donnees.sources['{#SOURCE}'].indexed"
+                  error_handler: CUSTOM_VALUE
+                  error_handler_params: '0'
+              tags:
+                - tag: composant
+                  value: application
+                - tag: source
+                  value: '{#SOURCE}'
+          trigger_prototypes:
+            - uuid: '3797e986b228487fba89437fa0b2429a'
+              expression: 'last(/DocSearch frontend/docsearch.etat.http)=200 and max(/DocSearch frontend/docsearch.source.documents[{#SOURCE}],1h)=0'
+              name: 'Source {#SOURCE} : aucun document indexé depuis 1 h'
+              priority: WARNING
+              description: |
+                Source enregistrée mais son index est vide. Normal juste après
+                l'enregistrement, anormal ensuite : index supprimé, ou scan jamais
+                lancé pour cette source.
+              tags:
+                - tag: scope
+                  value: application
+
+    # ═══════════════════════════════════════════════════════════
+    #  6. INGESTION — ingest-1, ingest-2, ingest-3
+    # ═══════════════════════════════════════════════════════════
+    - uuid: '76cb77709507487ebce758a6bc15cdaa'
+      template: 'DocSearch ingestion'
+      name: 'DocSearch ingestion'
+      description: |
+        Sondes des machines d'ingestion : les deux serveurs Tika et le partage
+        réseau des documents sources. Les workers eux-mêmes sont vus par le
+        modèle "DocSearch socle" (unités systemd) et, côté file, par
+        "DocSearch Kafka".
+      groups:
+        - name: 'Templates/DocSearch'
+
+      macros:
+        - macro: '{$DOCSEARCH.SOURCES.CHEMIN}'
+          value: '/data/docsearch-sources'
+
+      valuemaps:
+        - uuid: 'e8c8b9cf470248de8b3a178bdf6db4f3'
+          name: 'Oui non'
+          mappings:
+            - value: '0'
+              newvalue: 'Non'
+            - value: '1'
+              newvalue: 'Oui'
+
+      items:
+
+        - uuid: '934f0e6b2bf748ed9553fa75f191f6d7'
+          name: 'Tika A : port 9998'
+          type: SIMPLE
+          key: 'net.tcp.service[http,,9998]'
+          delay: 1m
+          value_type: UNSIGNED
+          valuemap:
+            name: 'Oui non'
+          description: |
+            Les images officielles apache/tika n'embarquent aucun outil HTTP
+            utilisable (TIKA-3333) : pas de HealthCmd possible dans l'unité
+            Quadlet. Le contrôle se fait donc depuis l'extérieur, sur le port
+            publié — ce qui teste au passage exactement le chemin qu'empruntent
+            les workers des autres machines d'ingestion.
+          tags:
+            - tag: composant
+              value: tika
+
+        - uuid: '89ed08507bff4f1bbce739e82b76722b'
+          name: 'Tika B : port 9999'
+          type: SIMPLE
+          key: 'net.tcp.service[http,,9999]'
+          delay: 1m
+          value_type: UNSIGNED
+          valuemap:
+            name: 'Oui non'
+          tags:
+            - tag: composant
+              value: tika
+          triggers:
+            - uuid: '5907be2a9fb0499dac5b98a73cce427e'
+              expression: 'min(/DocSearch ingestion/net.tcp.service[http,,9998],5m)=0 and min(/DocSearch ingestion/net.tcp.service[http,,9999],5m)=0'
+              name: 'Tika : les deux instances de cette machine sont muettes'
+              priority: AVERAGE
+              description: |
+                Les 4 instances des deux autres machines d'ingestion prennent le
+                relais : l'extraction continue, plus lentement. Devient HIGH via
+                l'agrégat du modèle "DocSearch application" si toutes tombent.
+              tags:
+                - tag: scope
+                  value: tika
+
+        - uuid: 'ad33e3f936ba49a2b35830d487a3bf3f'
+          name: 'Tika A : temps de réponse'
+          type: SIMPLE
+          key: 'net.tcp.service.perf[http,,9998]'
+          delay: 1m
+          value_type: FLOAT
+          units: s
+          tags:
+            - tag: composant
+              value: tika
+
+        - uuid: '9dce2e4caa004b76bf87ccb28c9984c3'
+          name: 'Tika B : temps de réponse'
+          type: SIMPLE
+          key: 'net.tcp.service.perf[http,,9999]'
+          delay: 1m
+          value_type: FLOAT
+          units: s
+          tags:
+            - tag: composant
+              value: tika
+
+        - uuid: '91d2813f829e4d9ba4facdfe57361e47'
+          name: 'Sources : montage {$DOCSEARCH.SOURCES.CHEMIN}'
+          key: 'docsearch.montage[{$DOCSEARCH.SOURCES.CHEMIN}]'
+          delay: 5m
+          history: 1h
+          trends: '0'
+          value_type: TEXT
+          tags:
+            - tag: composant
+              value: sources
+
+        - uuid: '58000331c0b24f79b99ff6baedc937aa'
+          name: 'Sources : partage monté'
+          type: DEPENDENT
+          key: 'docsearch.montage.monte'
+          value_type: UNSIGNED
+          valuemap:
+            name: 'Oui non'
+          master_item:
+            key: 'docsearch.montage[{$DOCSEARCH.SOURCES.CHEMIN}]'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.monte'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: sources
+          triggers:
+            - uuid: 'd111c6ba894d4c82a507b40098d3cb0d'
+              expression: 'min(/DocSearch ingestion/docsearch.montage.monte,10m)=0'
+              name: 'Sources : le partage réseau n''est plus monté'
+              priority: HIGH
+              description: |
+                La panne la plus silencieuse de la pile. Le watcher continue de
+                battre et les workers de tourner ; il n'y a simplement plus aucun
+                fichier à voir. Aucune erreur nulle part, et l'indexation s'arrête.
+                Remède : mount -a, puis vérifier /etc/fstab et le serveur de fichiers.
+              tags:
+                - tag: scope
+                  value: sources
+
+        - uuid: 'b2d8c200967b4aa0b9564b1fe6af112c'
+          name: 'Sources : partage lisible'
+          type: DEPENDENT
+          key: 'docsearch.montage.lisible'
+          value_type: UNSIGNED
+          valuemap:
+            name: 'Oui non'
+          master_item:
+            key: 'docsearch.montage[{$DOCSEARCH.SOURCES.CHEMIN}]'
+          description: |
+            Distinct de "monté" : une poignée CIFS périmée laisse le montage en
+            place mais toute lecture échoue ou reste bloquée. Le remède n'est
+            pas le même (remontage, pas simple mount -a).
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.lisible'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '0'
+          tags:
+            - tag: composant
+              value: sources
+          triggers:
+            - uuid: 'c6220328e3c54ba59327e33b3cc7c50d'
+              expression: 'last(/DocSearch ingestion/docsearch.montage.monte)=1 and min(/DocSearch ingestion/docsearch.montage.lisible,10m)=0'
+              name: 'Sources : le partage est monté mais illisible'
+              priority: HIGH
+              description: 'Poignée CIFS périmée ou droits modifiés côté serveur de fichiers. Remonter le partage.'
+              tags:
+                - tag: scope
+                  value: sources
+
+        - uuid: '3e73708be8374fed86404c53fcc7fe91'
+          name: 'Sources : partage vide'
+          type: DEPENDENT
+          key: 'docsearch.montage.vide'
+          value_type: UNSIGNED
+          valuemap:
+            name: 'Oui non'
+          master_item:
+            key: 'docsearch.montage[{$DOCSEARCH.SOURCES.CHEMIN}]'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.vide'
+              error_handler: CUSTOM_VALUE
+              error_handler_params: '1'
+          tags:
+            - tag: composant
+              value: sources
+
+    # ═══════════════════════════════════════════════════════════
+    #  7. APPLICATION — hôte logique, sans agent
+    #
+    #  Deux familles d'éléments :
+    #    • l'état du CLUSTER Elasticsearch, relevé une seule fois
+    #      (le relever sur chaque nœud le ferait sonner trois fois) ;
+    #    • les agrégats inter-machines, seuls capables de voir ce
+    #      qu'aucune machine ne voit seule : le watcher démarré deux
+    #      fois, les 6 Tika tombés ensemble, les 9 workers réduits à 3.
+    #
+    #  À lier sur un hôte SANS interface, par exemple "DocSearch —
+    #  application", membre du groupe "DocSearch/application".
+    #  Les agrégats visent des groupes d'hôtes nommés en dur : respecter
+    #  les noms de groupes du README §2.
+    # ═══════════════════════════════════════════════════════════
+    - uuid: '23c7fd4d101242db9ce466517613df2c'
+      template: 'DocSearch application'
+      name: 'DocSearch application'
+      description: |
+        État du cluster Elasticsearch et agrégats inter-machines. À lier sur un
+        hôte logique sans interface. Aucun agent requis.
+      groups:
+        - name: 'Templates/DocSearch'
+
+      macros:
+        - macro: '{$DOCSEARCH.ES.URL}'
+          value: 'http://192.168.10.11:9200'
+          description: |
+            Un nœud de données joignable, à adapter. C'est aussi celui que
+            désigne ES_HOST côté API — utiliser le même rend la sonde
+            représentative de ce que voit l'application.
+        - macro: '{$DOCSEARCH.ES.ALIAS}'
+          value: 'docsearch-all'
+        - macro: '{$DOCSEARCH.ES.NOEUDS.ATTENDUS}'
+          value: '3'
+        - macro: '{$DOCSEARCH.TIKA.ATTENDUS}'
+          value: '6'
+        - macro: '{$DOCSEARCH.TIKA.MIN}'
+          value: '4'
+        - macro: '{$DOCSEARCH.WORKERS.MIN}'
+          value: '9'
+        - macro: '{$DOCSEARCH.DOCS.CHUTE.MAX}'
+          value: '10000'
+          description: 'Chute du nombre de documents indexés, entre deux relevés, jugée anormale.'
+
+      valuemaps:
+        - uuid: '5e30261b384640c2af161c55f2cdab8b'
+          name: 'Etat cluster ES'
+          mappings:
+            - value: '0'
+              newvalue: 'Vert'
+            - value: '1'
+              newvalue: 'Jaune'
+            - value: '2'
+              newvalue: 'Rouge'
+
+      items:
+
+        - uuid: 'f85546ade15444ca973deea3bfa0c2a8'
+          name: 'Cluster ES : santé'
+          type: HTTP_AGENT
+          key: 'es.cluster.sante'
+          url: '{$DOCSEARCH.ES.URL}/_cluster/health'
+          delay: 1m
+          timeout: 15s
+          history: 1h
+          trends: '0'
+          value_type: TEXT
+          tags:
+            - tag: composant
+              value: elasticsearch
+
+        - uuid: 'c7287cbcaff8499888dacb19786a4bd9'
+          name: 'Cluster ES : état'
+          type: DEPENDENT
+          key: 'es.cluster.etat'
+          value_type: UNSIGNED
+          valuemap:
+            name: 'Etat cluster ES'
+          master_item:
+            key: 'es.cluster.sante'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var d = JSON.parse(value);
+                  var t = {green: 0, yellow: 1, red: 2};
+                  return t[d.status] === undefined ? 2 : t[d.status];
+          tags:
+            - tag: composant
+              value: elasticsearch
+          triggers:
+            - uuid: '7f4e303756f64792b08ae221a583984f'
+              expression: 'last(/DocSearch application/es.cluster.etat)=2'
+              name: 'Elasticsearch : cluster ROUGE'
+              priority: DISASTER
+              description: |
+                Au moins un shard primaire est indisponible : une partie du corpus
+                ne peut plus être ni cherchée ni indexée.
+                GET /_cluster/allocation/explain donne la raison exacte.
+              tags:
+                - tag: scope
+                  value: elasticsearch
+            - uuid: '273430043e114ff0a54167172e51c8cb'
+              expression: 'min(/DocSearch application/es.cluster.etat,15m)=1'
+              name: 'Elasticsearch : cluster JAUNE depuis 15 min'
+              priority: AVERAGE
+              description: |
+                Réplicas non assignés : la recherche fonctionne, la redondance non.
+                Normal quelques minutes après le redémarrage d'un nœud, anormal ensuite.
+              tags:
+                - tag: scope
+                  value: elasticsearch
+
+        - uuid: 'ce56a1fad60e40ac84b1effd3f31586e'
+          name: 'Cluster ES : nœuds'
+          type: DEPENDENT
+          key: 'es.cluster.noeuds'
+          value_type: UNSIGNED
+          master_item:
+            key: 'es.cluster.sante'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.number_of_nodes'
+          tags:
+            - tag: composant
+              value: elasticsearch
+          triggers:
+            - uuid: '6f1027fe068244e88c690048ad759613'
+              expression: 'min(/DocSearch application/es.cluster.noeuds,10m)<{$DOCSEARCH.ES.NOEUDS.ATTENDUS}'
+              name: 'Elasticsearch : le cluster n''a plus ses {$DOCSEARCH.ES.NOEUDS.ATTENDUS} nœuds'
+              priority: HIGH
+              description: |
+                Avec 2 nœuds de données et 1 arbitre, la perte d'un nœud laisse le
+                quorum tenable ; la perte d'un second l'anéantit (plus d'élection de
+                master possible). Vérifier aussi que le port 9300 est ouvert entre
+                les 3 machines.
+              tags:
+                - tag: scope
+                  value: elasticsearch
+
+        - uuid: '6a81b3023f3e436b9d7d2cd514b33f26'
+          name: 'Cluster ES : nœuds de données'
+          type: DEPENDENT
+          key: 'es.cluster.noeuds.donnees'
+          value_type: UNSIGNED
+          master_item:
+            key: 'es.cluster.sante'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.number_of_data_nodes'
+          tags:
+            - tag: composant
+              value: elasticsearch
+
+        - uuid: 'f3109c9ef0d042f19e957cbc74766c16'
+          name: 'Cluster ES : shards non assignés'
+          type: DEPENDENT
+          key: 'es.cluster.shards.non_assignes'
+          value_type: UNSIGNED
+          master_item:
+            key: 'es.cluster.sante'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.unassigned_shards'
+          tags:
+            - tag: composant
+              value: elasticsearch
+          triggers:
+            - uuid: 'd1e3244ee54d464c9f8f490f2c59fdba'
+              expression: 'min(/DocSearch application/es.cluster.shards.non_assignes,20m)>0'
+              name: 'Elasticsearch : des shards restent non assignés depuis 20 min'
+              priority: AVERAGE
+              tags:
+                - tag: scope
+                  value: elasticsearch
+
+        - uuid: '56d7a9f8c09e417789e641a3ce890fd2'
+          name: 'Cluster ES : shards actifs'
+          type: DEPENDENT
+          key: 'es.cluster.shards.pct'
+          value_type: FLOAT
+          units: '%'
+          master_item:
+            key: 'es.cluster.sante'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.active_shards_percent_as_number'
+          tags:
+            - tag: composant
+              value: elasticsearch
+
+        - uuid: '9eae4852f6414fc993a8c511b1a6b0df'
+          name: 'Cluster ES : tâches en attente'
+          type: DEPENDENT
+          key: 'es.cluster.taches'
+          value_type: UNSIGNED
+          master_item:
+            key: 'es.cluster.sante'
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.number_of_pending_tasks'
+          tags:
+            - tag: composant
+              value: elasticsearch
+          triggers:
+            - uuid: 'bbc0d0adebfa4784aeaebc00cd2f42f3'
+              expression: 'min(/DocSearch application/es.cluster.taches,10m)>50'
+              name: 'Elasticsearch : file de tâches du master engorgée'
+              priority: WARNING
+              description: 'Le master n''absorbe plus les changements d''état : créations d''index et bascules de shards traînent.'
+              tags:
+                - tag: scope
+                  value: elasticsearch
+
+        - uuid: 'fcc3e1c8afc54bdd852a83494aeda342'
+          name: 'Cluster ES : nœud master'
+          type: HTTP_AGENT
+          key: 'es.cluster.master'
+          url: '{$DOCSEARCH.ES.URL}/_cat/master'
+          query_fields:
+            - name: format
+              value: json
+          delay: 2m
+          timeout: 15s
+          value_type: CHAR
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$[0].node'
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters:
+                - 1d
+          tags:
+            - tag: composant
+              value: elasticsearch
+          triggers:
+            - uuid: '518434f2698846da8a84dfe7bf6a3a1d'
+              expression: 'change(/DocSearch application/es.cluster.master)<>0 and length(last(/DocSearch application/es.cluster.master))>0'
+              name: 'Elasticsearch : le nœud master a changé'
+              priority: WARNING
+              manual_close: 'YES'
+              description: |
+                Une élection a eu lieu. Isolé, c'est bénin (redémarrage d'un nœud).
+                Répété, c'est un réseau instable entre les 3 machines, et le cluster
+                passe son temps à se réorganiser au lieu de servir.
+              tags:
+                - tag: scope
+                  value: elasticsearch
+
+        - uuid: '9ac0275023cc48969bebcca2af399df9'
+          name: 'Cluster ES : index passés en lecture seule'
+          type: HTTP_AGENT
+          key: 'es.cluster.lecture_seule'
+          url: '{$DOCSEARCH.ES.URL}/_all/_settings/index.blocks.read_only_allow_delete'
+          query_fields:
+            - name: flat_settings
+              value: 'true'
+          delay: 5m
+          timeout: 15s
+          value_type: UNSIGNED
+          description: |
+            Elasticsearch pose ce verrou tout seul quand le disque dépasse le
+            seuil haut, et NE LE RETIRE PAS quand la place revient. L'indexation
+            s'arrête alors définitivement, sans erreur ailleurs que dans les
+            journaux des workers.
+            Levée : PUT /_all/_settings {"index.blocks.read_only_allow_delete": null}
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var d = JSON.parse(value), n = 0;
+                  for (var i in d) {
+                      var s = d[i].settings || {};
+                      if (String(s['index.blocks.read_only_allow_delete']) === 'true') n++;
+                  }
+                  return n;
+          tags:
+            - tag: composant
+              value: elasticsearch
+          triggers:
+            - uuid: '3f4bc09c318b4d78917faae374ccdb49'
+              expression: 'last(/DocSearch application/es.cluster.lecture_seule)>0'
+              name: 'Elasticsearch : des index sont bloqués en lecture seule'
+              priority: DISASTER
+              description: |
+                Verrou de seuil disque. Libérer de la place PUIS lever le verrou à la
+                main — Elasticsearch ne le fait pas de lui-même.
+              tags:
+                - tag: scope
+                  value: elasticsearch
+
+        - uuid: '4538b7832d2b4bb6bf755029bf83d7ad'
+          name: 'Cluster ES : documents dans l''alias fédéré'
+          type: HTTP_AGENT
+          key: 'es.documents.total'
+          url: '{$DOCSEARCH.ES.URL}/{$DOCSEARCH.ES.ALIAS}/_count'
+          delay: 5m
+          timeout: 15s
+          value_type: UNSIGNED
+          preprocessing:
+            - type: JSONPATH
+              parameters:
+                - '$.count'
+          tags:
+            - tag: composant
+              value: application
+          triggers:
+            - uuid: '435c9c4eeba844e1baab8c1121279cdb'
+              expression: 'change(/DocSearch application/es.documents.total)<-{$DOCSEARCH.DOCS.CHUTE.MAX}'
+              name: 'DocSearch : chute brutale du nombre de documents indexés'
+              priority: HIGH
+              manual_close: 'YES'
+              description: |
+                Attendu après une purge volontaire (manage.sh purge-path) ou une
+                réindexation. Inattendu autrement : index supprimé, alias amputé
+                d'un index, ou source retirée par erreur.
+              tags:
+                - tag: scope
+                  value: application
+
+        # ── Agrégats inter-machines ────────────────────────────
+        - uuid: 'c69ab77a67d04b2f9eb4c3dc9ff88a6d'
+          name: 'Agrégat : instances Tika joignables'
+          type: CALCULATED
+          key: 'docsearch.agr.tika'
+          params: 'sum(last_foreach(/*/net.tcp.service[http,,9998]?[group="DocSearch/ingestion"]))+sum(last_foreach(/*/net.tcp.service[http,,9999]?[group="DocSearch/ingestion"]))'
+          delay: 2m
+          value_type: UNSIGNED
+          description: 'Les 6 serveurs Tika des 3 machines d''ingestion, vus d''un bloc.'
+          tags:
+            - tag: composant
+              value: tika
+          triggers:
+            - uuid: '51e715c36db849a4a00823fbd8647d88'
+              expression: 'max(/DocSearch application/docsearch.agr.tika,10m)=0'
+              name: 'Ingestion : plus AUCUNE instance Tika dans tout le cluster'
+              priority: HIGH
+              description: 'Plus aucun document ne peut être extrait, sur aucune machine. L''indexation est à l''arrêt.'
+              tags:
+                - tag: scope
+                  value: tika
+            - uuid: '4657e9a8328b43e780a743410690aead'
+              expression: 'max(/DocSearch application/docsearch.agr.tika,10m)<{$DOCSEARCH.TIKA.MIN}'
+              name: 'Ingestion : moins de {$DOCSEARCH.TIKA.MIN} instances Tika sur {$DOCSEARCH.TIKA.ATTENDUS}'
+              priority: WARNING
+              dependencies:
+                - name: 'Ingestion : plus AUCUNE instance Tika dans tout le cluster'
+                  expression: 'max(/DocSearch application/docsearch.agr.tika,10m)=0'
+              tags:
+                - tag: scope
+                  value: tika
+
+        - uuid: '0d97605a731f46af93edeb95aeacbb23'
+          name: 'Agrégat : watchers actifs dans le cluster'
+          type: CALCULATED
+          key: 'docsearch.agr.watchers'
+          params: 'sum(last_foreach(/*/docsearch.unite.actif[docsearch-watcher.service]?[group="DocSearch/ingestion"]))'
+          delay: 2m
+          value_type: UNSIGNED
+          description: |
+            Doit valoir EXACTEMENT 1. Le watcher est un singleton installé sur
+            ingest-1 seulement (install-units.sh ingest --with-singletons).
+            Aucune machine ne peut détecter seule qu'une autre en fait tourner
+            un second : seul cet agrégat le voit.
+          tags:
+            - tag: composant
+              value: ingestion
+          triggers:
+            - uuid: 'e3407140d9ac4cb58513a377f7b97b33'
+              expression: 'last(/DocSearch application/docsearch.agr.watchers)>1'
+              name: 'Ingestion : PLUSIEURS watchers tournent en même temps'
+              priority: HIGH
+              description: |
+                Chaque fichier est publié deux fois sur Kafka, donc extrait et indexé
+                deux fois : charge doublée sur Tika et sur Elasticsearch.
+                Cause : install-units.sh ingest --with-singletons lancé sur plus
+                d'une machine. Arrêter et désinstaller l'unité en trop.
+              tags:
+                - tag: scope
+                  value: ingestion
+            - uuid: '53746c91fbdc4120b59ddbf15d6d9763'
+              expression: 'max(/DocSearch application/docsearch.agr.watchers,10m)=0'
+              name: 'Ingestion : aucun watcher actif dans le cluster'
+              priority: AVERAGE
+              description: |
+                Plus de détection temps réel : les nouveaux documents n'arriveront
+                qu'au prochain scan complet. La recherche n'est pas affectée.
+              tags:
+                - tag: scope
+                  value: ingestion
+
+        - uuid: '82719c4a00b94445a4dbcb18dc6c580d'
+          name: 'Agrégat : workers d''indexation dans le cluster'
+          type: CALCULATED
+          key: 'docsearch.agr.workers'
+          params: 'sum(last_foreach(/*/docsearch.unites.workers?[group="DocSearch/ingestion"]))'
+          delay: 2m
+          value_type: UNSIGNED
+          tags:
+            - tag: composant
+              value: ingestion
+          triggers:
+            - uuid: '7303ab0e7c744edb9ce278d4b6604fc2'
+              expression: 'max(/DocSearch application/docsearch.agr.workers,15m)<{$DOCSEARCH.WORKERS.MIN}'
+              name: 'Ingestion : moins de {$DOCSEARCH.WORKERS.MIN} workers actifs dans le cluster'
+              priority: WARNING
+              description: |
+                Configuration par défaut : 3 workers sur chacune des 3 machines
+                d'ingestion. En dessous, l'indexation ralentit sans s'arrêter.
+              tags:
+                - tag: scope
+                  value: ingestion
+
+        - uuid: '602c6e29b8594867877416f5917646bf'
+          name: 'Agrégat : documents en attente d''indexation'
+          type: CALCULATED
+          key: 'docsearch.agr.retard'
+          params: 'sum(last_foreach(/*/docsearch.kafka.retard?[group="DocSearch/kafka"]))'
+          delay: 2m
+          value_type: UNSIGNED
+          tags:
+            - tag: composant
+              value: ingestion
+
+        - uuid: '76246607b75b4740b7879311c398c9cb'
+          name: 'Agrégat : unités systemd en échec dans le cluster'
+          type: CALCULATED
+          key: 'docsearch.agr.unites.echouees'
+          params: 'sum(last_foreach(/*/docsearch.unites.echouees?[group="DocSearch"]))'
+          delay: 2m
+          value_type: UNSIGNED
+          description: 'Vue d''ensemble pour le tableau de bord : le détail est sur chaque machine.'
+          tags:
+            - tag: composant
+              value: systemd
+
+        - uuid: 'ad47a7502cd64097bff07bf102537668'
+          name: 'Agrégat : conteneurs malades dans le cluster'
+          type: CALCULATED
+          key: 'docsearch.agr.conteneurs.malsains'
+          params: 'sum(last_foreach(/*/docsearch.conteneurs.malsains?[group="DocSearch"]))'
+          delay: 2m
+          value_type: UNSIGNED
+          tags:
+            - tag: composant
+              value: podman

@@ -5,3 +5,7 @@ nginx/certs/
 *.tar.gz
 backups/
 .idea/
+
+# Cache Python (generer-reference.py)
+__pycache__/
+*.pyc

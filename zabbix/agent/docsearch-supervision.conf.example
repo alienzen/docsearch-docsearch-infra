@@ -1,0 +1,47 @@
+# ─────────────────────────────────────────────────────────────
+#  Compte de supervision DocSearch — machine frontend uniquement
+#  → /etc/zabbix/docsearch-supervision.conf   (0640, root:zabbix)
+#
+#  ⚠️  CE FICHIER PORTE UN MOT DE PASSE. Il ne va jamais dans le dépôt,
+#  jamais dans un Containerfile, jamais en argument de ligne de commande.
+#  Seul l'utilisateur zabbix a besoin de le lire.
+#
+#  Créer le compte AVANT de remplir ce fichier :
+#
+#    sudo podman exec -it docsearch-api \
+#      python scripts/gerer-comptes-locaux.py creer svc-supervision \
+#      --groupes docsearch-users,docsearch-admins \
+#      --nom "Supervision Zabbix"
+#
+#  Un compte LOCAL et non un compte d'annuaire, délibérément : la
+#  supervision doit continuer de répondre quand l'annuaire est en panne
+#  — c'est le moment où on la regarde. Les deux groupes sont requis :
+#  docsearch-users pour ouvrir une session (contrôlé à la connexion),
+#  docsearch-admins pour /admin/status.
+# ─────────────────────────────────────────────────────────────
+
+# Point d'entrée HTTPS. 127.0.0.1 : la sonde tourne SUR la machine
+# frontend. L'en-tête Host doit correspondre au server_name de Nginx.
+DOCSEARCH_URL=https://127.0.0.1
+DOCSEARCH_HOTE=docsearch.local
+
+# L'API en direct, pour distinguer une panne de Nginx d'une panne d'API.
+DOCSEARCH_URL_DIRECTE=http://127.0.0.1:8000
+
+DOCSEARCH_IDENTIFIANT=svc-supervision
+DOCSEARCH_MOT_DE_PASSE=à-remplacer
+
+# Requête témoin de la sonde de recherche de bout en bout. Choisir un
+# terme dont on sait qu'il ramène des résultats en permanence — sinon
+# l'alerte « la recherche ne ramène plus rien » sonnera pour rien.
+# Le compte de supervision étant membre de docsearch-users seulement,
+# le filtrage ACL s'applique : vérifier le compte de résultats attendu
+# AVEC CE COMPTE, pas avec un compte d'administration.
+DOCSEARCH_REQUETE_TEMOIN=rapport
+
+# Répertoire d'état (pot à biscuits de session + verrou). 0700 zabbix.
+DOCSEARCH_ETAT_DIR=/var/lib/zabbix/docsearch
+
+# Plafond de chaque appel HTTP, en secondes. Doit rester sous le Timeout
+# de zabbix_agent2.conf.
+DOCSEARCH_DELAI=20

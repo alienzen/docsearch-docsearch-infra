@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────
+#  docsearch-zabbix-unites — état des unités systemd de la pile
+#
+#  Sortie : un tableau JSON, une entrée par unité "docsearch-*".
+#  Sert À LA FOIS d'élément maître (les valeurs) et de source de
+#  découverte de bas niveau — une seule exécution par intervalle, quel
+#  que soit le nombre d'unités.
+#
+#  Les champs portent des noms ordinaires ("nom", "actif"…) et non des
+#  macros {#…} : la règle de découverte les convertit via ses
+#  lld_macro_paths. Nommer directement la clé "{#UNITE}" casserait les
+#  prototypes d'élément, dont le JSONPath verrait la macro substituée
+#  des DEUX côtés de la comparaison.
+#
+#  Aucun privilège requis : "systemctl show" est lisible par tous.
+#  Les unités sont générées par Quadlet, donc absentes de
+#  list-unit-files tant que le générateur n'a pas tourné — c'est
+#  list-units qui fait foi ici.
+# ─────────────────────────────────────────────────────────────
+set -uo pipefail
+export LC_ALL=C
+
+echappe() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
+unites=$(systemctl list-units --type=service --all --plain --no-legend \
+             'docsearch-*.service' 2>/dev/null | awk '{print $1}' | sort -u)
+
+premier=1
+printf '['
+for unite in $unites; do
+    # Une seule invocation par unité, toutes les propriétés d'un coup.
+    # Lecture par boucle et non par eval : les valeurs viennent de systemd,
+    # pas de nous, et une propriété à espaces casserait un eval.
+    etat=inconnu; sous=inconnu; resultat=inconnu; type=inconnu
+    redemarrages=0; code=0; memoire=0
+    while IFS='=' read -r cle valeur; do
+        case "$cle" in
+            ActiveState)     etat="$valeur" ;;
+            SubState)        sous="$valeur" ;;
+            Result)          resultat="$valeur" ;;
+            Type)            type="$valeur" ;;
+            NRestarts)       redemarrages="$valeur" ;;
+            ExecMainStatus)  code="$valeur" ;;
+            # Mémoire du cgroup de l'unité, conteneur compris : c'est ce
+            # qui dit qu'un worker approche de son --memory=1g avant que
+            # le noyau ne le tue. "[not set]" quand l'unité est arrêtée.
+            MemoryCurrent)   memoire="$valeur" ;;
+        esac
+    done < <(systemctl show "$unite" \
+                 --property=ActiveState,SubState,Result,Type,NRestarts,ExecMainStatus,MemoryCurrent \
+                 2>/dev/null)
+    case "$memoire" in ''|*[!0-9]*) memoire=0 ;; esac
+    case "$redemarrages" in ''|*[!0-9]*) redemarrages=0 ;; esac
+    case "$code" in ''|*[!0-9]*) code=0 ;; esac
+
+    # Un oneshot terminé correctement (docsearch-kafka-ready) est
+    # "inactive/dead" : le compter comme arrêté ferait sonner une alarme
+    # à chaque démarrage réussi de la machine.
+    actif=0
+    case "$etat" in
+        active)   actif=1 ;;
+        inactive) [ "$type" = "oneshot" ] && [ "$resultat" = "success" ] && actif=1 ;;
+    esac
+
+    echoue=0
+    [ "$etat" = "failed" ] && echoue=1
+    case "$resultat" in
+        success|inconnu|"") ;;
+        *) echoue=1 ;;
+    esac
+
+    [ $premier -eq 0 ] && printf ','
+    premier=0
+    printf '{"nom":"%s","court":"%s","actif":%d,"echoue":%d,"redemarrages":%d,"code_sortie":%d,"memoire_octets":%s,"etat":"%s","sous_etat":"%s","resultat":"%s","type":"%s"}' \
+        "$(echappe "$unite")" \
+        "$(echappe "${unite%.service}")" \
+        "$actif" "$echoue" "${redemarrages:-0}" "${code:-0}" "$memoire" \
+        "$(echappe "$etat")" "$(echappe "$sous")" \
+        "$(echappe "$resultat")" "$(echappe "$type")"
+done
+printf ']\n'

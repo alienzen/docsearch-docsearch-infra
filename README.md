@@ -231,6 +231,17 @@ réseau. Il n'y a donc rien à désactiver sur une machine isolée — seule
 `./manage.sh build` demande un accès Internet, et ne se lance que sur la
 machine de préparation.
 
+## Supervision (Zabbix)
+
+Les sondes des 8 machines de production et de l'application vivent dans
+[zabbix/](zabbix/) : modèles à importer (Zabbix 7.0 LTS), scripts de
+collecte, configuration de l'agent et script de déploiement par rôle.
+Elles n'appellent rien à l'extérieur — `curl`, `openssl`, `awk`,
+`systemctl` et `podman` sont déjà là, rien à vendoriser. Voir
+[zabbix/README.md](zabbix/README.md), en commençant par l'ouverture du
+port 10050 dans nftables : le jeu de règles du guide d'installation est
+en `policy drop` et ne le liste pas.
+
 ## Stack technique
 
 Elasticsearch 9.4.3 · Apache Tika 3.3.1.0 · Kafka 8.3 (KRaft, sans

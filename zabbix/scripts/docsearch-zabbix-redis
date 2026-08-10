@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────
+#  docsearch-zabbix-redis — état de Redis et de ce qu'il contient
+#
+#  ⚠️  À lancer en root (sudo) : passe par "podman exec" sur le
+#  conteneur rootful. redis-cli n'est pas installé sur l'hôte, et
+#  l'installer pour la seule supervision serait une dépendance de plus
+#  à vendoriser pour la production hors ligne.
+#
+#  DEUX SONDES EN UNE, et la seconde est la plus importante :
+#
+#  1. Santé du serveur (mémoire, évictions, sauvegarde RDB).
+#     Redis tourne ici avec --maxmemory 512mb --maxmemory-policy
+#     allkeys-lru. Cette politique n'épargne AUCUNE clé : sous
+#     pression mémoire, Redis évincera aussi bien un historique de
+#     recherche que le registre des sources ou une session ouverte.
+#     Une seule éviction est donc un événement grave, pas une
+#     statistique — d'où evicted_keys remonté tel quel.
+#
+#  2. Présence des registres de configuration et fraîcheur des
+#     battements de cœur des singletons d'ingestion. Le watcher écrit
+#     docsearch:heartbeat:watcher toutes les WATCHER_POLL_INTERVAL
+#     secondes avec un TTL de 120 s : la clé disparue vaut watcher mort.
+# ─────────────────────────────────────────────────────────────
+set -uo pipefail
+export LC_ALL=C
+
+PODMAN=${PODMAN:-/usr/bin/podman}
+CONTENEUR=${CONTENEUR_REDIS:-docsearch-redis}
+
+# Un seul podman exec pour tout : chaque appel coûte ~100 ms, et l'agent
+# a un budget de quelques secondes.
+brut=$(timeout 15 "$PODMAN" exec "$CONTENEUR" sh -c '
+    redis-cli INFO memory
+    redis-cli INFO stats
+    redis-cli INFO persistence
+    redis-cli INFO clients
+    redis-cli INFO server
+    echo "dbsize:$(redis-cli DBSIZE)"
+    for registre in file_sources sql_sources web_sources runtime filetypes ui; do
+        echo "existe_${registre}:$(redis-cli EXISTS docsearch:config:${registre})"
+    done
+    for hb in watcher sql_worker web_worker; do
+        echo "battement_${hb}:$(redis-cli --raw GET docsearch:heartbeat:${hb})"
+    done
+' 2>/dev/null)
+
+if [ -z "$brut" ]; then
+    printf '{"joignable":0}\n'
+    exit 0
+fi
+
+maintenant=$(date +%s)
+
+# Un seul passage awk : extraction des champs INFO utiles, des compteurs
+# de clés et de l'âge des battements de cœur.
+printf '%s\n' "$brut" | awk -v maintenant="$maintenant" '
+function num(v) { gsub(/[^0-9.-]/, "", v); return (v == "" ? 0 : v) }
+BEGIN {
+    FS = ":"
+    ages["watcher"] = -1; ages["sql_worker"] = -1; ages["web_worker"] = -1
+}
+/^used_memory:/              { used = num($2) }
+/^maxmemory:/                { maxi = num($2) }
+/^mem_fragmentation_ratio:/  { frag = num($2) }
+/^evicted_keys:/             { evictions = num($2) }
+/^expired_keys:/             { expirees = num($2) }
+/^keyspace_hits:/            { hits = num($2) }
+/^keyspace_misses:/          { misses = num($2) }
+/^total_commands_processed:/ { commandes = num($2) }
+/^rejected_connections:/     { refusees = num($2) }
+/^connected_clients:/        { clients = num($2) }
+/^blocked_clients:/          { bloques = num($2) }
+/^uptime_in_seconds:/        { uptime = num($2) }
+/^rdb_changes_since_last_save:/ { rdb_modifs = num($2) }
+/^rdb_last_bgsave_status:/   { rdb_ok = ($2 ~ /ok/) ? 1 : 0 }
+/^rdb_last_save_time:/       { rdb_date = num($2) }
+/^dbsize:/                   { cles = num($2) }
+/^existe_/ {
+    nom = substr($1, 8)
+    registres[nom] = num($2)
+}
+/^battement_/ {
+    nom = substr($1, 11)
+    # La valeur est le JSON du battement, qui contient lui-même des ":".
+    # On ne cherche que "ts": <flottant>.
+    reste = $0
+    if (match(reste, /"ts"[ ]*:[ ]*[0-9.]+/)) {
+        horodatage = substr(reste, RSTART, RLENGTH)
+        gsub(/[^0-9.]/, "", horodatage)
+        ages[nom] = int(maintenant - horodatage)
+    }
+}
+END {
+    ratio = (maxi > 0) ? (used * 100.0 / maxi) : 0
+    printf "{\"joignable\":1"
+    printf ",\"memoire_utilisee\":%d", used
+    printf ",\"memoire_max\":%d", maxi
+    printf ",\"memoire_pct\":%.2f", ratio
+    printf ",\"fragmentation\":%.2f", frag
+    printf ",\"evictions\":%d", evictions
+    printf ",\"cles_expirees\":%d", expirees
+    printf ",\"hits\":%d", hits
+    printf ",\"misses\":%d", misses
+    printf ",\"commandes\":%d", commandes
+    printf ",\"connexions_refusees\":%d", refusees
+    printf ",\"clients\":%d", clients
+    printf ",\"clients_bloques\":%d", bloques
+    printf ",\"uptime\":%d", uptime
+    printf ",\"rdb_ok\":%d", rdb_ok
+    printf ",\"rdb_modifs_depuis_sauvegarde\":%d", rdb_modifs
+    printf ",\"rdb_age_s\":%d", (rdb_date > 0 ? maintenant - rdb_date : -1)
+    printf ",\"cles\":%d", cles
+    printf ",\"registre_file_sources\":%d", registres["file_sources"]
+    printf ",\"registre_sql_sources\":%d", registres["sql_sources"]
+    printf ",\"registre_web_sources\":%d", registres["web_sources"]
+    printf ",\"registre_runtime\":%d", registres["runtime"]
+    printf ",\"registre_filetypes\":%d", registres["filetypes"]
+    printf ",\"registre_ui\":%d", registres["ui"]
+    printf ",\"battement_watcher_s\":%d", ages["watcher"]
+    printf ",\"battement_sql_worker_s\":%d", ages["sql_worker"]
+    printf ",\"battement_web_worker_s\":%d", ages["web_worker"]
+    printf "}\n"
+}
+'

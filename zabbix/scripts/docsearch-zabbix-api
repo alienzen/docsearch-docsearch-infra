@@ -1,0 +1,239 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────
+#  docsearch-zabbix-api — sondes applicatives DocSearch
+#
+#  Usage : docsearch-zabbix-api {sante|etat|metriques|recherche|web|jwks}
+#
+#  Tourne sur la machine frontend, sous l'utilisateur zabbix. Tout passe
+#  par Nginx en HTTPS (127.0.0.1 avec l'en-tête Host attendu) et non par
+#  le port 8000 en direct : c'est la chaîne réelle — TLS, proxy, API,
+#  Elasticsearch — qui doit être mesurée. Une seule sonde vise 8000
+#  directement (mode "sante"), pour distinguer « Nginx est tombé » de
+#  « l'API est tombée ».
+#
+#  ── Authentification ─────────────────────────────────────────
+#  L'API vérifie elle-même un jeton RS256 qu'elle a signé ; aucun
+#  en-tête d'identité n'est cru sur parole depuis que TRUST_X_USER_HEADER
+#  est verrouillé en production. Les sondes ouvrent donc une vraie
+#  session, avec un compte LOCAL dédié — pas un compte d'annuaire :
+#
+#    • un compte local reste opérant quand l'annuaire est en panne,
+#      c'est-à-dire exactement quand la supervision doit encore parler ;
+#    • il ne dépend d'aucune synchronisation d'AD.
+#
+#  Le pot à biscuits est réutilisé d'une exécution à l'autre : une
+#  session est ouverte, puis rafraîchie quand le jeton d'accès expire
+#  (15 min par défaut). Chaque ouverture ET chaque rafraîchissement
+#  écrivent une ligne dans login_events : ~96 lignes/jour, avec
+#  l'agent utilisateur "Zabbix-DocSearch" pour les filtrer.
+#
+#  Configuration : /etc/zabbix/docsearch-supervision.conf (0640,
+#  root:zabbix) — jamais dans le dépôt, jamais en argument de ligne de
+#  commande où le mot de passe serait visible dans la liste des
+#  processus et dans la clé de l'élément Zabbix.
+# ─────────────────────────────────────────────────────────────
+set -uo pipefail
+export LC_ALL=C
+
+CONF=${DOCSEARCH_SUPERVISION_CONF:-/etc/zabbix/docsearch-supervision.conf}
+# shellcheck source=/dev/null
+[ -r "$CONF" ] && . "$CONF"
+
+URL=${DOCSEARCH_URL:-https://127.0.0.1}
+URL_DIRECTE=${DOCSEARCH_URL_DIRECTE:-http://127.0.0.1:8000}
+HOTE=${DOCSEARCH_HOTE:-docsearch.local}
+IDENTIFIANT=${DOCSEARCH_IDENTIFIANT:-svc-supervision}
+MOT_DE_PASSE=${DOCSEARCH_MOT_DE_PASSE:-}
+REQUETE=${DOCSEARCH_REQUETE_TEMOIN:-rapport}
+ETAT_DIR=${DOCSEARCH_ETAT_DIR:-/var/lib/zabbix/docsearch}
+DELAI=${DOCSEARCH_DELAI:-20}
+
+POT="$ETAT_DIR/cookies"
+VERROU="$ETAT_DIR/verrou"
+AGENT="Zabbix-DocSearch"
+
+mkdir -p "$ETAT_DIR" 2>/dev/null
+chmod 700 "$ETAT_DIR" 2>/dev/null
+
+# Les éléments Zabbix sont collectés en parallèle : sans verrou, deux
+# sondes réécriraient le pot à biscuits en même temps et se
+# déconnecteraient mutuellement (le rafraîchissement révoque le jeton
+# consommé).
+exec 9>"$VERROU"
+flock -w 15 9 || { printf '{"http":0,"temps_ms":0,"donnees":null,"erreur":"verrou indisponible"}\n'; exit 0; }
+
+CORPS=$(mktemp) || exit 1
+trap 'rm -f "$CORPS"' EXIT
+
+# -k : le certificat de production est auto-signé (voir §6.4 du guide
+# d'installation). La validité, elle, est surveillée à part.
+curl_base=(curl -sk --max-time "$DELAI" -A "$AGENT" -H "Host: $HOTE")
+
+# Un appel HTTP. Le résultat passe par les variables globales CODE et
+# TEMPS_MS, PAS par la sortie standard : une substitution de commande
+# ouvre un sous-shell, et la durée mesurée y resterait — mesurée, puis
+# perdue, avec un temps_ms toujours à zéro pour seul symptôme.
+CODE=0
+TEMPS_MS=0
+appel() {
+    local methode="$1" chemin="$2" donnees="${3:-}"
+    local args=("${curl_base[@]}" -b "$POT" -c "$POT" -o "$CORPS"
+                -w '%{http_code} %{time_total}' -X "$methode" "$URL$chemin")
+    [ -n "$donnees" ] && args+=(-H 'Content-Type: application/json' -d "$donnees")
+
+    local sortie temps
+    sortie=$("${args[@]}" 2>/dev/null)
+    CODE=${sortie%% *}
+    temps=${sortie##* }
+    case "$CODE" in ''|*[!0-9]*) CODE=0 ;; esac
+    TEMPS_MS=$(awk -v t="${temps:-0}" 'BEGIN { printf "%d", t * 1000 }')
+}
+
+# Échappement JSON d'une chaîne : l'antislash AVANT le guillemet, sinon
+# le guillemet échappé se retrouve ré-échappé.
+json_chaine() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    printf '%s' "$s"
+}
+
+connexion() {
+    local charge
+    charge=$(printf '{"identifiant":"%s","mot_de_passe":"%s"}' \
+                 "$(json_chaine "$IDENTIFIANT")" "$(json_chaine "$MOT_DE_PASSE")")
+    "${curl_base[@]}" -c "$POT" -o /dev/null \
+        -H 'Content-Type: application/json' -d "$charge" \
+        "$URL/auth/login" >/dev/null 2>&1
+}
+
+rafraichir() {
+    "${curl_base[@]}" -b "$POT" -c "$POT" -o /dev/null -X POST \
+        "$URL/auth/refresh" >/dev/null 2>&1
+}
+
+# Un appel, puis au plus deux reprises : rafraîchissement du jeton
+# d'accès expiré, sinon reconnexion complète. Jamais plus — une boucle
+# de reconnexion sur identifiants faux atteindrait la limite de débit
+# (5 échecs / 15 min) et bloquerait le compte de supervision.
+appel_authentifie() {
+    appel "$@"
+    if [ "$CODE" = "401" ]; then
+        rafraichir
+        appel "$@"
+    fi
+    if [ "$CODE" = "401" ]; then
+        connexion
+        appel "$@"
+    fi
+}
+
+# Enveloppe uniforme : le code HTTP et la durée sont toujours présents,
+# quel que soit le sort de l'appel. Les éléments dépendants lisent
+# $.donnees.* et $.http, jamais une sortie de forme variable.
+emettre() {
+    local attendu="$1"
+    printf '{"http":%s,"temps_ms":%s,"donnees":' "$CODE" "$TEMPS_MS"
+    if [ "$CODE" = "$attendu" ] && [ -s "$CORPS" ]; then
+        # Le corps est déjà du JSON : recopié tel quel, sans reformatage.
+        tr -d '\n\r' < "$CORPS"
+    else
+        printf 'null'
+    fi
+    printf '}\n'
+}
+
+case "${1:-}" in
+
+    # Santé de l'API, port 8000 en direct, sans authentification.
+    # Distingue « Nginx est tombé » de « l'API est tombée ».
+    sante)
+        sortie=$(curl -s --max-time "$DELAI" -A "$AGENT" -o "$CORPS" \
+                      -w '%{http_code} %{time_total}' "$URL_DIRECTE/health" 2>/dev/null)
+        CODE=${sortie%% *}; temps=${sortie##* }
+        case "$CODE" in ''|*[!0-9]*) CODE=0 ;; esac
+        TEMPS_MS=$(awk -v t="${temps:-0}" 'BEGIN { printf "%d", t * 1000 }')
+        emettre 200
+        ;;
+
+    # État agrégé de TOUS les composants : ES, Redis, Tika, Kafka,
+    # workers actifs, retard d'indexation, battement du watcher,
+    # versions déployées, documents par source. Le cœur de la
+    # supervision applicative.
+    etat)
+        appel_authentifie GET /admin/status
+        emettre 200
+        ;;
+
+    # Volumétrie indexée, toutes sources confondues.
+    metriques)
+        appel_authentifie GET /metrics
+        emettre 200
+        ;;
+
+    # Recherche réelle, de bout en bout : TLS → Nginx → API → contrôle
+    # d'accès → Elasticsearch → agrégations. C'est la seule sonde qui
+    # mesure ce que l'utilisateur ressent.
+    #
+    # ⚠️  Nginx limite /search à 30 req/min par IP (limit_req zone=search) :
+    # ne pas descendre sous la minute d'intervalle.
+    recherche)
+        appel_authentifie POST /search \
+            "{\"query\":\"$(json_chaine "$REQUETE")\",\"size\":1}"
+        emettre 200
+        ;;
+
+    # La racine doit renvoyer 302 vers /connexion : l'accès anonyme
+    # n'existe plus. Un 200 ici signalerait un contrôle d'accès contourné.
+    web)
+        sortie=$("${curl_base[@]}" -o /dev/null -w '%{http_code} %{time_total} %{redirect_url}' \
+                     "$URL/" 2>/dev/null)
+        read -r CODE temps cible <<< "$sortie"
+        case "$CODE" in ''|*[!0-9]*) CODE=0 ;; esac
+        TEMPS_MS=$(awk -v t="${temps:-0}" 'BEGIN { printf "%d", t * 1000 }')
+        printf '{"http":%s,"temps_ms":%s,"donnees":{"redirection":"%s"}}\n' \
+            "$CODE" "$TEMPS_MS" "$(json_chaine "${cible:-}")"
+        ;;
+
+    # Les clés de signature sont-elles lisibles par le service ? C'est le
+    # piège documenté au §6.4 du guide : /etc/docsearch/jwt monté en
+    # lecture seule et chowné hors de la plage subuid donne un /auth/login
+    # en 503, sans que rien d'autre ne bronche. Cette route publie la
+    # clé PUBLIQUE : elle répond dès que le trousseau est lisible.
+    jwks)
+        appel GET /auth/.well-known/jwks.json
+        emettre 200
+        ;;
+
+    # Validité du certificat présenté par Nginx. Le guide d'installation
+    # (§6.4) fait générer un certificat AUTO-SIGNÉ valable 365 jours :
+    # sans surveillance, il expire un an jour pour jour après la mise en
+    # service, et l'application devient inaccessible d'un coup.
+    # openssl plutôt que web.certificate.get : il est déjà présent sur la
+    # machine (c'est lui qui a généré le certificat) et sa sortie ne
+    # dépend d'aucune version d'agent.
+    certificat)
+        texte=$(echo | timeout 10 openssl s_client -connect 127.0.0.1:443 \
+                    -servername "$HOTE" 2>/dev/null \
+                | openssl x509 -noout -enddate -subject -issuer 2>/dev/null)
+        if [ -z "$texte" ]; then
+            printf '{"http":0,"temps_ms":0,"donnees":null,"erreur":"poignee de main TLS impossible"}\n'
+            exit 0
+        fi
+        fin=$(printf '%s\n' "$texte" | sed -n 's/^notAfter=//p')
+        sujet=$(printf '%s\n' "$texte" | sed -n 's/^subject=//p' | tr -d '"\\')
+        emetteur=$(printf '%s\n' "$texte" | sed -n 's/^issuer=//p' | tr -d '"\\')
+        fin_epoch=$(date -d "$fin" +%s 2>/dev/null)
+        case "$fin_epoch" in ''|*[!0-9]*) fin_epoch=0 ;; esac
+        jours=$(( fin_epoch > 0 ? (fin_epoch - $(date +%s)) / 86400 : -1 ))
+        auto=0
+        [ "$sujet" = "$emetteur" ] && auto=1
+        printf '{"http":200,"temps_ms":0,"donnees":{"jours_restants":%d,"expire_le":"%s","sujet":"%s","emetteur":"%s","auto_signe":%d}}\n' \
+            "$jours" "$fin" "$sujet" "$emetteur" "$auto"
+        ;;
+
+    *)
+        echo "Usage : $0 {sante|etat|metriques|recherche|web|jwks|certificat}" >&2
+        exit 1
+        ;;
+esac

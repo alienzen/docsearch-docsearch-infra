@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────
+#  docsearch-zabbix-kafka — file d'indexation, vue du broker
+#
+#  ⚠️  À lancer en root (sudo) : passe par "podman exec" sur le
+#  conteneur rootful docsearch-kafka. Les outils kafka-* vivent dans
+#  l'image, rien n'est installé sur l'hôte.
+#
+#  Ces mêmes chiffres sont exposés par /admin/status côté frontend.
+#  Les mesurer AUSSI ici n'est pas une redondance inutile : /admin/status
+#  passe par l'API, qui a besoin d'Elasticsearch, de Redis et d'une
+#  session valide. Quand l'API tombe, la sonde qui compte encore est
+#  celle-ci — et c'est précisément le moment où savoir si l'indexation
+#  continue a de la valeur.
+#
+#  Appel lent (kafka-consumer-groups interroge le coordinateur) :
+#  prévoir Timeout=30 dans zabbix_agent2.conf et un intervalle de 2 min.
+# ─────────────────────────────────────────────────────────────
+set -uo pipefail
+export LC_ALL=C
+
+PODMAN=${PODMAN:-/usr/bin/podman}
+CONTENEUR=${CONTENEUR_KAFKA:-docsearch-kafka}
+TOPIC=${KAFKA_TOPIC:-documents-to-index}
+GROUPE=${KAFKA_GROUP_ID:-indexer-workers}
+BOOTSTRAP=${KAFKA_BOOTSTRAP_LOCAL:-localhost:9092}
+
+description_topic=$(timeout 25 "$PODMAN" exec "$CONTENEUR" \
+    kafka-topics --bootstrap-server "$BOOTSTRAP" --describe --topic "$TOPIC" 2>/dev/null)
+
+if [ -z "$description_topic" ]; then
+    # Broker injoignable OU topic absent : les deux se distinguent par la
+    # liste des topics, qui répond même si celui-ci n'existe pas.
+    if timeout 25 "$PODMAN" exec "$CONTENEUR" \
+           kafka-topics --bootstrap-server "$BOOTSTRAP" --list >/dev/null 2>&1; then
+        printf '{"broker":1,"topic_present":0,"partitions":0,"membres":0,"partitions_assignees":0,"retard":0,"retard_max_partition":0}\n'
+    else
+        printf '{"broker":0,"topic_present":0,"partitions":0,"membres":0,"partitions_assignees":0,"retard":0,"retard_max_partition":0}\n'
+    fi
+    exit 0
+fi
+
+partitions=$(printf '%s\n' "$description_topic" \
+    | awk -F'PartitionCount:[[:space:]]*' '/PartitionCount/ { split($2, a, /[[:space:]]/); print a[1]; exit }')
+case "$partitions" in ''|*[!0-9]*) partitions=0 ;; esac
+
+# Colonnes de --describe :
+#   GROUP TOPIC PARTITION CURRENT-OFFSET LOG-END-OFFSET LAG CONSUMER-ID HOST CLIENT-ID
+# Un groupe sans membre actif garde ses offsets validés : le retard reste
+# mesurable même quand tous les workers sont arrêtés — c'est justement ce
+# qu'on veut voir.
+groupe=$(timeout 25 "$PODMAN" exec "$CONTENEUR" \
+    kafka-consumer-groups --bootstrap-server "$BOOTSTRAP" --describe --group "$GROUPE" 2>/dev/null)
+
+printf '%s\n' "$groupe" | awk -v partitions="$partitions" '
+# En-tête, lignes vides, et surtout « Consumer group ... has no active
+# members. », qui a juste assez de colonnes pour être prise pour une
+# ligne de données.
+$1 == "GROUP" { next }
+$3 !~ /^[0-9]+$/ { next }
+{
+    lag = $6
+    if (lag ~ /^[0-9]+$/) {
+        total += lag
+        if (lag > maxi) maxi = lag
+        lignes++
+    }
+    # CONSUMER-ID vaut "-" pour une partition non assignée.
+    if (NF >= 7 && $7 != "-") {
+        consommateurs[$7] = 1
+        assignees++
+    }
+}
+END {
+    n = 0
+    for (c in consommateurs) n++
+    printf "{\"broker\":1,\"topic_present\":1,\"partitions\":%d", partitions
+    printf ",\"membres\":%d", n
+    printf ",\"partitions_assignees\":%d", assignees + 0
+    printf ",\"retard\":%d", total + 0
+    printf ",\"retard_max_partition\":%d", maxi + 0
+    printf ",\"partitions_suivies\":%d", lignes + 0
+    printf "}\n"
+}
+'

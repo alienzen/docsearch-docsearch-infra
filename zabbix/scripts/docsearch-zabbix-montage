@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────
+#  docsearch-zabbix-montage — santé du partage réseau des sources
+#
+#  Usage : docsearch-zabbix-montage /data/docsearch-sources
+#
+#  Le partage CIFS/NFS des documents est monté sur les 3 machines
+#  d'ingestion et sur frontend (aperçu de document). Sa disparition est
+#  la panne la plus silencieuse de la pile : le watcher ne voit plus
+#  aucun fichier nouveau, ne publie rien sur Kafka, ne signale aucune
+#  erreur — et son battement de cœur continue. Vu de l'application,
+#  tout va bien, il n'y a simplement plus de nouveaux documents.
+#
+#  Trois états distincts, parce qu'ils ne se réparent pas pareil :
+#    monte=0            le montage a disparu (mount -a)
+#    monte=1 lisible=0  poignée CIFS périmée ou droits changés (remount)
+#    lisible=1 vide=1   le partage répond mais est vide (côté serveur)
+# ─────────────────────────────────────────────────────────────
+set -uo pipefail
+export LC_ALL=C
+
+CHEMIN="${1:-}"
+[ -z "$CHEMIN" ] && { echo '{"monte":0,"lisible":0,"vide":1,"type":"chemin absent"}'; exit 0; }
+
+monte=0
+lisible=0
+vide=1
+type="aucun"
+
+if mountpoint -q -- "$CHEMIN" 2>/dev/null; then
+    monte=1
+    type=$(findmnt -n -o FSTYPE --target "$CHEMIN" 2>/dev/null | head -1)
+    [ -z "$type" ] && type=inconnu
+fi
+
+# timeout impératif : sur une poignée CIFS périmée, la lecture reste
+# bloquée en E/S ininterruptible et emporterait le collecteur de l'agent
+# avec elle. -print -quit s'arrête à la première entrée : le coût ne
+# dépend pas de la taille du partage.
+if [ "$monte" -eq 1 ]; then
+    premiere=$(timeout 5 find "$CHEMIN" -maxdepth 1 -mindepth 1 -print -quit 2>/dev/null)
+    if [ $? -eq 0 ]; then
+        lisible=1
+        [ -n "$premiere" ] && vide=0
+    fi
+fi
+
+printf '{"monte":%d,"lisible":%d,"vide":%d,"type":"%s"}\n' \
+    "$monte" "$lisible" "$vide" "$type"

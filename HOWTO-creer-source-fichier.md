@@ -139,9 +139,12 @@ donne le nombre de documents indexés par source.
 - **searchable / collectable** : panneau "Toutes
   les sources" (vue unifiée fichier/SQL/web), ou
   `POST /admin/all-sources/{name}/{searchable,collectable}?type=file`.
-  `searchable=false` retire la source de `/search` sans arrêter
-  l'ingestion ; `collectable=false` bloque l'ajout à une collection
-  sans effet sur la recherche.
+  `searchable=false` retire la source de la consultation sans arrêter
+  l'ingestion — ses documents disparaissent de `/search` **et** de
+  l'accès direct par identifiant (`/document/{id}`, `/api/preview/{id}`),
+  y compris pour un lien copié ou un document laissé dans une
+  collection avant la désactivation ; `collectable=false` bloque l'ajout
+  à une collection sans effet sur la recherche.
 - **Filtres de sous-dossiers** (inclure/exclure des motifs glob) : voir
   [HOWTO-filtres-sous-dossiers.md](HOWTO-filtres-sous-dossiers.md).
 

@@ -218,6 +218,9 @@ curl -b ~/.docsearch-cookies http://localhost:8000/admin/all-sources | jq
 - **searchable / collectable** : panneau "Toutes
   les sources", ou
   `POST /admin/all-sources/{name}/{searchable,collectable}?type=sql`.
+  `searchable=false` retire la source de la consultation sans arrêter le
+  sql-worker — ses lignes disparaissent de `/search` **et** de l'accès
+  direct par identifiant (`/document/{id}`).
 - **Changer la requête, le mapping ou `poll_interval_seconds`** : pas
   de route dédiée — repasser par le formulaire d'édition de l'admin UI
   (pré-rempli) ou réappeler `add-sql-source`/`POST /admin/sql-sources`

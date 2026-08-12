@@ -307,9 +307,11 @@ source à l'étape 3 — pas de gestion d'ACL fine par page).
 - **Modifier la description** : `POST /admin/web-sources/{name}/description`.
 - **searchable / collectable** : panneau "Toutes les sources", ou
   `POST /admin/all-sources/{name}/{searchable,collectable}?type=web`.
-  `searchable=false` retire la source de `/search` sans arrêter la
-  synchro ; `collectable=false` bloque l'ajout à une collection sans
-  effet sur la recherche.
+  `searchable=false` retire la source de la consultation sans arrêter la
+  synchro — ses documents disparaissent de `/search` **et** de l'accès
+  direct par identifiant (`/document/{id}`, `/api/preview/{id}`) ;
+  `collectable=false` bloque l'ajout à une collection sans effet sur la
+  recherche.
 - **Forcer un passage manuel** : `sudo ./manage.sh run-web-source <nom>` —
   utile après une modification de `crawl_rules` suivie d'un recrawl
   manuel, pour ne pas attendre `poll_interval_seconds`.

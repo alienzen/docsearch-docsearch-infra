@@ -794,6 +794,36 @@ print(f'{n} document(s) supprimé(s) de l\'index.')
     log "Purge terminée."
     ;;
 
+  migrer-synonymes)
+    SOURCE="${2:-}"
+    log "Application de l'analyseur de synonymes aux index de documents."
+    warn "Chaque index est FERMÉ quelques secondes puis rouvert — la recherche y est indisponible pendant ce temps. AUCUNE réindexation n'a lieu."
+    init_run python3 -c "
+from file_sources_config import get_sources, get_source
+from indexer import migrer_analyse
+import json
+sources = {'$SOURCE': get_source('$SOURCE')} if '$SOURCE' else get_sources()
+for nom, source in sources.items():
+    print(json.dumps({'source': nom, **migrer_analyse(source)}, ensure_ascii=False))
+"
+    log "Terminé. Le thésaurus se règle ensuite depuis le panneau d'administration, à chaud."
+    ;;
+
+  backfill-hashes)
+    SOURCE=""
+    APPLY=""
+    for arg in "${@:2}"; do
+        case "$arg" in
+          --apply) APPLY="--apply" ;;
+          *)       SOURCE="$arg" ;;
+        esac
+    done
+    if [ -z "$APPLY" ]; then
+        log "Simulation (aucune écriture). Ajouter --apply pour écrire."
+    fi
+    init_run python3 backfill_hashes.py $SOURCE $APPLY
+    ;;
+
   set-filetype)
     EXT="${2:-}"
     if [ -z "$EXT" ]; then
@@ -923,6 +953,10 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
     echo "    list-path-filters [source]          Afficher les filtres de chemin actuels"
     echo "    purge-path <motif> [source]         Supprimer de l'index les documents déjà"
     echo "                                        indexés correspondant au motif (avec confirmation)"
+    echo "    migrer-synonymes [source]           Poser l'analyseur de synonymes sur les index"
+    echo "                                        existants (close/open, PAS de réindexation)"
+    echo "    backfill-hashes [source] [--apply]  Calculer l'empreinte de contenu des documents"
+    echo "                                        déjà indexés (détection de doublons)"
     echo "    backup          Snapshot Elasticsearch"
     echo "    reset           Supprimer toutes les données (irréversible, sudo)"
     echo ""

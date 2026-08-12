@@ -61,6 +61,13 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   mots-clés (champ multi-valué) combinés en ET : cocher un second
   mot-clé restreint aux documents qui portent les deux.
 - **Tri** des résultats (pertinence, date...).
+- **Thésaurus métier** : les sigles et appellations qui désignent la même
+  chose (« DRH » et « direction des ressources humaines », ancien et
+  nouveau nom d'un service) se déclarent depuis le panneau
+  d'administration et prennent effet **immédiatement, sans
+  réindexation** — le moteur recharge ses analyseurs de recherche. La
+  recherche entre guillemets reste littérale : « terme exact » veut dire
+  exact.
 - **Permalien de recherche** : l'état de la recherche (texte, facettes,
   période, tri, page) vit dans l'URL, donc une recherche s'envoie par
   lien, se met en signet et survit à F5 ; le bouton Précédent revient à
@@ -157,6 +164,13 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   description, activation OCR (fichiers) — plus une vue unifiée «
   Toutes les sources » avec bascules indépendantes « Recherche » et «
   Collections », tous types de source confondus.
+- **Détection de doublons** : chaque document fichier porte une empreinte
+  de son contenu, ce qui permet de compter les exemplaires en trop et de
+  chiffrer la place qu'ils occupent, avec les chemins où aller regarder.
+  Rapport calculé une fois par jour (l'agrégation parcourt l'index) et
+  recalculable à la demande. Les documents indexés avant cette
+  fonctionnalité se rattrapent par `./manage.sh backfill-hashes`, qui
+  relit les fichiers sans appeler Tika.
 - **Purge d'index** ciblée par motif de chemin (dry-run par défaut) et
   **déclenchement de scan** d'indexation à la demande.
 - **Statistiques de recherche** (`stats.html`) : volumétrie, requêtes

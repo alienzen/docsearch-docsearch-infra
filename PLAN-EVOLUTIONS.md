@@ -45,7 +45,7 @@ Ils valent pour les sept chantiers, et aucun n'est négociable.
 |---|---|---|
 | **A** | ~~7 permaliens, 8a historique, 1 autocomplétion~~ — **lot terminé le 2026-08-12** | Aucun changement de mapping ni d'index. 8a produit la donnée que 1 consomme. Le meilleur rapport visible/risque. |
 | **B** | ~~3 rétention, 2 zéro résultat~~ — **lot terminé le 2026-08-12** | Hygiène. 3 protège le disque avant que les chantiers suivants n'écrivent davantage. |
-| **C** | 4 doublons, 6 synonymes et épinglés | **Les deux seuls qui touchent au mapping et aux réglages des index** : `close`/`open` pour l'un, réindexation pour l'autre. À grouper dans une seule fenêtre d'exploitation. |
+| **C** | 4 doublons ✔, 6 synonymes ✔ — **résultats épinglés restants** | **Les deux seuls qui touchent au mapping et aux réglages des index** : `close`/`open` pour l'un, réindexation pour l'autre. À grouper dans une seule fenêtre d'exploitation. |
 | **D** | 8b récemment consultés, 8c collections partagées | Confort, sans dépendance. |
 
 Charge totale estimée : **17 à 22 jours-homme**, hors recette.
@@ -301,7 +301,19 @@ une ligne.
 
 ---
 
-## §4. Détection de doublons
+## §4. Détection de doublons — **fait le 2026-08-12**
+
+Livré : `content_sha256` calculé par les deux chemins d'indexation,
+`GET /admin/duplicates` (agrégation + cache Redis quotidien), panneau
+« Doublons », et `./manage.sh backfill-hashes` pour l'existant. 6 tests
+contre un vrai Elasticsearch.
+
+**Écart avec le plan** : le regroupement des copies dans les résultats de
+recherche (`collapse`) n'est PAS livré. Le rapport d'administration
+répond au besoin réel — savoir combien de place les copies occupent et où
+elles sont — alors que `collapse` change les comptes affichés à tous les
+utilisateurs pour un gain moins clair. À reprendre si la demande vient du
+terrain.
 
 **Constat** — le champ `doc_hash` du mapping
 ([indexer.py:466](../docsearch-ingestion/app/indexer.py:466)) vaut le `doc_id`,
@@ -369,7 +381,34 @@ rétro-remplissage), plus la réindexation ou le rattrapage sur l'existant.
 
 ---
 
-## §6. Synonymes métier et résultats épinglés
+## §6. Synonymes métier et résultats épinglés — **synonymes faits le 2026-08-12**
+
+Livré : les trois analyseurs du champ `content`, `migrer_analyse()` +
+`./manage.sh migrer-synonymes` pour les index existants, CRUD du
+thésaurus (`/admin/synonyms`), essai d'une requête, panneau
+« Thésaurus ». 8 tests contre un vrai Elasticsearch.
+
+**Les résultats épinglés (§6.2) restent à faire** — le seul élément du
+plan qui n'a pas été livré à ce jour.
+
+**Quatre points éprouvés contre le moteur avant d'écrire le code**, dont
+un dément ce que ce plan affirmait :
+
+1. L'ordre des filtres est déterminant : synonymes AVANT le stemmer,
+   sinon zéro résultat sans la moindre erreur.
+2. `search_quote_analyzer` s'applique bien à `multi_match type: phrase` —
+   c'est ce qui laisse la recherche entre guillemets littérale, **sans
+   toucher à la construction de requête de `search_api.py`**. Le plan
+   envisageait de documenter une bizarrerie ; le mapping l'évite.
+3. ⚠️ **Le §6.1 avait tort** : un jeu de synonymes inexistant n'empêche
+   ni la création, ni la fermeture, ni la réouverture d'un index. La
+   précaution d'ordre qu'il imposait est inutile (ES 9.4.3).
+4. En revanche, Elasticsearch **refuse de supprimer un jeu référencé par
+   un index** (400). Retirer la dernière règle écrit donc un jeu vide,
+   parfaitement accepté et équivalent à l'absence de synonymes. Trouvé
+   par un test qui a échoué.
+
+
 
 Deux fonctionnalités distinctes, réunies parce qu'elles répondent à la même
 question — « pourquoi cette recherche ne donne rien alors que le document

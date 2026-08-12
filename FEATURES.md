@@ -47,6 +47,14 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   mots-clés (champ multi-valué) combinés en ET : cocher un second
   mot-clé restreint aux documents qui portent les deux.
 - **Tri** des résultats (pertinence, date...).
+- **Permalien de recherche** : l'état de la recherche (texte, facettes,
+  période, tri, page) vit dans l'URL, donc une recherche s'envoie par
+  lien, se met en signet et survit à F5 ; le bouton Précédent revient à
+  la recherche précédente. Le lien partage la **recherche, pas les
+  droits** — le destinataire la rejoue avec ses propres ACL et peut en
+  voir moins. L'URL porte les critères canoniques, ceux d'après
+  l'analyse des opérateurs de la barre : `type:pdf` tapé à la main et la
+  facette « PDF » cochée produisent le même lien.
 - **Documents similaires** ("More Like This") depuis la fiche détail.
 - **Aperçu de documents** en ligne (conversion PDF à la volée via
   LibreOffice pour les formats bureautiques).

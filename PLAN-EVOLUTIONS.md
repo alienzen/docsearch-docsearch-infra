@@ -43,7 +43,7 @@ Ils valent pour les sept chantiers, et aucun n'est négociable.
 
 | Lot | Chantiers | Pourquoi ensemble |
 |---|---|---|
-| **A** | 7 permaliens, 8a historique, 1 autocomplétion | Aucun changement de mapping ni d'index. 8a produit la donnée que 1 consomme. Le meilleur rapport visible/risque. |
+| **A** | ~~7 permaliens~~ (fait), 8a historique, 1 autocomplétion | Aucun changement de mapping ni d'index. 8a produit la donnée que 1 consomme. Le meilleur rapport visible/risque. |
 | **B** | 3 rétention, 2 zéro résultat | Hygiène. 3 protège le disque avant que les chantiers suivants n'écrivent davantage. |
 | **C** | 4 doublons, 6 synonymes et épinglés | **Les deux seuls qui touchent au mapping et aux réglages des index** : `close`/`open` pour l'un, réindexation pour l'autre. À grouper dans une seule fenêtre d'exploitation. |
 | **D** | 8b récemment consultés, 8c collections partagées | Confort, sans dépendance. |
@@ -397,7 +397,12 @@ durablement un lien mort.
 
 ---
 
-## §7. Permaliens de recherche
+## §7. Permaliens de recherche — **fait le 2026-08-12**
+
+Livré : `src/utils/permalien.ts` (sérialisation), `usePermalien` (lecture au
+chargement et au retour arrière), écriture depuis `doSearch()`, bouton
+« Copier le lien » dans la barre d'outils des résultats. 19 tests d'aller-retour
+et de robustesse d'URL, 8 tests de store. Descendu dans [FEATURES.md](FEATURES.md).
 
 **Constat** — aucun `pushState`/`replaceState` dans l'interface : l'état de
 recherche ne va pas dans l'URL. Conséquences quotidiennes : impossible

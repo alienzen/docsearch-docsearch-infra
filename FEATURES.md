@@ -122,8 +122,19 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
 - **Purge d'index** ciblée par motif de chemin (dry-run par défaut) et
   **déclenchement de scan** d'indexation à la demande.
 - **Statistiques de recherche** (`stats.html`) : volumétrie, requêtes
-  fréquentes, recherches sans résultat, export, journal d'audit des
-  actions d'administration.
+  fréquentes, recherches sans résultat, temps de recherche, export,
+  journal d'audit des actions d'administration.
+- **Mesure des temps de recherche** sur le trafic réel, et non sur une
+  requête témoin : chaque recherche enregistre le temps du moteur
+  (`took` d'Elasticsearch) et le temps total de l'API, dont l'écart
+  indique si une lenteur vient du moteur ou de ce qui l'entoure. Les
+  deux sont conservés dans l'index `search_logs`, agrégés dans les
+  statistiques (moyenne, médiane, 95ᵉ centile, nombre de recherches
+  lentes) et exportés avec l'historique. Au-delà d'un seuil réglable
+  (`SLOW_SEARCH_MS`, 2000 ms par défaut, aligné sur la macro Zabbix
+  correspondante), la recherche laisse une ligne dans le journal du
+  service. Complète la sonde Zabbix, qui ne mesure qu'une requête
+  témoin une fois par minute.
 - **Ventilation par groupe d'utilisateurs** : recherches, avis
   positifs/négatifs, score NPS, suggestions et recherches sans résultat
   sont aussi présentés par groupe LDAP. Les groupes sont figés **à
@@ -135,9 +146,9 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   `docsearch-api/README.md`, section « Statistiques par groupe ».
 - **Bascules d'interface** granulaires : assistant IA, pied de page,
   liens Administration/Statistiques, export, aide, collections,
-  mots-clés personnalisés, alertes, tri, badge utilisateur, animation
-  d'accueil — chacune indépendamment activable/désactivable, effectives
-  immédiatement.
+  mots-clés personnalisés, alertes, tri, temps de recherche, badge
+  utilisateur, animation d'accueil — chacune indépendamment
+  activable/désactivable, effectives immédiatement.
 - **Personnalisation** : bloc-marque, titre et sous-titre d'en-tête,
   favicon, description et mention de bas de page, chemin affiché par le
   bouton « Copier le chemin ».

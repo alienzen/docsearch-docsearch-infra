@@ -7,6 +7,13 @@ détail technique de chacune, voir le README du dépôt concerné
 [docsearch-ui-vue](../docsearch-ui-vue/README.md)) ou ce dépôt pour
 l'orchestration.
 
+**Ce fichier ne décrit que l'existant.** Ce qui est décidé mais pas encore
+écrit vit dans [PLAN-EVOLUTIONS.md](PLAN-EVOLUTIONS.md) (sept chantiers
+arrêtés le 2026-08-12 : autocomplétion, écran « zéro résultat », rétention
+des journaux, détection de doublons, synonymes et résultats épinglés,
+permaliens, espace personnel) — les deux listes ne doivent jamais se
+recouvrir : une fonctionnalité livrée descend du plan vers ce catalogue.
+
 L'interface est [docsearch-ui-vue](../docsearch-ui-vue/README.md), **Vue 3
 conforme au Système de Design de l'État**. Elle a remplacé `docsearch-ui`
 (HTML/JS sans build), dont le dépôt est désormais archivé en bundle git
@@ -63,7 +70,9 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   `true`), le masquer depuis l'admin est recommandé sur toute
   installation où cette maquette pourrait être prise pour une
   fonctionnalité réelle. Voir `docsearch-docs/proposition_docsearch.docx`
-  pour l'option envisagée.
+  pour l'option envisagée, et [PLAN-EVOLUTIONS.md](PLAN-EVOLUTIONS.md) — le
+  chantier §5 (RAG réel ou recherche sémantique seule) y est resté hors
+  plan, faute d'arbitrage sur le matériel qu'il suppose.
 - **Mesure de satisfaction** : pouce haut/bas par recherche, popup NPS
   occasionnelle, suggestions libres, tracking de clic sur les résultats
   (toujours actif, signal passif) — chaque signal individuellement

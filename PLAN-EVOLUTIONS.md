@@ -45,7 +45,7 @@ Ils valent pour les sept chantiers, et aucun n'est négociable.
 |---|---|---|
 | **A** | ~~7 permaliens, 8a historique, 1 autocomplétion~~ — **lot terminé le 2026-08-12** | Aucun changement de mapping ni d'index. 8a produit la donnée que 1 consomme. Le meilleur rapport visible/risque. |
 | **B** | ~~3 rétention, 2 zéro résultat~~ — **lot terminé le 2026-08-12** | Hygiène. 3 protège le disque avant que les chantiers suivants n'écrivent davantage. |
-| **C** | 4 doublons ✔, 6 synonymes ✔ — **résultats épinglés restants** | **Les deux seuls qui touchent au mapping et aux réglages des index** : `close`/`open` pour l'un, réindexation pour l'autre. À grouper dans une seule fenêtre d'exploitation. |
+| **C** | ~~4 doublons, 6 synonymes et résultats épinglés~~ — **lot terminé le 2026-08-12** | **Les deux seuls qui touchent au mapping et aux réglages des index** : `close`/`open` pour l'un, réindexation pour l'autre. À grouper dans une seule fenêtre d'exploitation. |
 | **D** | 8b récemment consultés, 8c collections partagées | Confort, sans dépendance. |
 
 Charge totale estimée : **17 à 22 jours-homme**, hors recette.
@@ -388,8 +388,21 @@ Livré : les trois analyseurs du champ `content`, `migrer_analyse()` +
 thésaurus (`/admin/synonyms`), essai d'une requête, panneau
 « Thésaurus ». 8 tests contre un vrai Elasticsearch.
 
-**Les résultats épinglés (§6.2) restent à faire** — le seul élément du
-plan qui n'a pas été livré à ce jour.
+**Résultats épinglés (§6.2) — faits le 2026-08-12.** Registre Redis,
+relecture filtrée par l'ACL dans `_documents_epingles()`, bloc `pinned`
+distinct de `results` dans la réponse de `/search`, panneau
+« Résultats épinglés ». 6 tests contre un vrai Elasticsearch, dont celui
+qui compte : un document épinglé mais interdit ne remonte pas.
+
+Deux choix de conception, pris en écrivant :
+
+- **un bloc à part plutôt qu'une fusion dans `results`.** Insérer les
+  épinglés dans la liste aurait fait diverger le nombre de cartes du
+  `total` annoncé, et rendu la pagination approximative. Le bloc distinct
+  garde `total` exact ET rend la mise en avant visible, ce qui est
+  précisément ce qu'on veut ;
+- **première page seulement.** Les répéter en tête de chaque page ferait
+  passer l'utilisateur devant les mêmes documents à chaque « suivant ».
 
 **Quatre points éprouvés contre le moteur avant d'écrire le code**, dont
 un dément ce que ce plan affirmait :

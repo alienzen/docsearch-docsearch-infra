@@ -76,6 +76,12 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   voir moins. L'URL porte les critères canoniques, ceux d'après
   l'analyse des opérateurs de la barre : `type:pdf` tapé à la main et la
   facette « PDF » cochée produisent le même lien.
+- **Résultats épinglés** : sur les requêtes que tout le monde tape
+  (« congés », « note de frais »), l'administration désigne le ou les
+  bons documents, affichés en tête de la première page sous la mention
+  « Proposé par votre administration » — jamais en silence. Épingler met
+  en avant, **cela n'autorise pas** : le document reste filtré par les
+  droits de chacun, et celui qui n'y a pas accès ne le voit pas.
 - **Documents similaires** ("More Like This") depuis la fiche détail.
 - **Aperçu de documents** en ligne (conversion PDF à la volée via
   LibreOffice pour les formats bureautiques).

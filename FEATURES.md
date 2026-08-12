@@ -109,7 +109,12 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   LDAP/AD dédié.
 - **État des composants** en temps réel : Elasticsearch (statut de
   cluster), Redis, Kafka, instances Tika, workers actifs, progression de
-  l'indexation, battement du watcher.
+  l'indexation, battement du watcher — plus trois contrôles d'écriture que
+  le statut de cluster ne couvre pas : journalisation des recherches,
+  recueil des suggestions et réponses NPS. Un cluster « green » dont les
+  index sont passés en lecture seule (flood-stage watermark, disque à
+  95 %) affiche du vert partout pendant que les avis, les statistiques,
+  les suggestions et les notes de satisfaction se perdent en silence.
 - **Gestion des sources** fichiers/SQL/web : création, retrait, libellé,
   description, activation OCR (fichiers) — plus une vue unifiée «
   Toutes les sources » avec bascules indépendantes « Recherche » et «

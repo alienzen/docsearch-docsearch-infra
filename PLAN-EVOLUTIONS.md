@@ -44,7 +44,7 @@ Ils valent pour les sept chantiers, et aucun n'est négociable.
 | Lot | Chantiers | Pourquoi ensemble |
 |---|---|---|
 | **A** | ~~7 permaliens, 8a historique, 1 autocomplétion~~ — **lot terminé le 2026-08-12** | Aucun changement de mapping ni d'index. 8a produit la donnée que 1 consomme. Le meilleur rapport visible/risque. |
-| **B** | 3 rétention, 2 zéro résultat | Hygiène. 3 protège le disque avant que les chantiers suivants n'écrivent davantage. |
+| **B** | ~~3 rétention, 2 zéro résultat~~ — **lot terminé le 2026-08-12** | Hygiène. 3 protège le disque avant que les chantiers suivants n'écrivent davantage. |
 | **C** | 4 doublons, 6 synonymes et épinglés | **Les deux seuls qui touchent au mapping et aux réglages des index** : `close`/`open` pour l'un, réindexation pour l'autre. À grouper dans une seule fenêtre d'exploitation. |
 | **D** | 8b récemment consultés, 8c collections partagées | Confort, sans dépendance. |
 
@@ -133,7 +133,23 @@ vraiment ici.
 
 ---
 
-## §2. Écran « zéro résultat » actionnable
+## §2. Écran « zéro résultat » actionnable — **fait le 2026-08-12**
+
+Livré : bloc `zero_result` de `/search` (un seul `msearch`, uniquement
+quand le total est nul), `EmptyResultsHelp.vue`. 10 tests d'API contre un
+vrai Elasticsearch, 8 d'interface.
+
+**Un piège trouvé en route, absent du plan** : le correcteur
+orthographique lit le dictionnaire de termes de l'index, que l'ACL ne
+filtre pas — il pouvait donc proposer un mot tiré d'un document interdit.
+La correction n'est rendue que si elle donne des résultats visibles par
+l'utilisateur, ce qui ferme la fuite et écarte du même coup les
+corrections qui ne mènent nulle part.
+
+**Écart avec le plan** : pas de champ `zero_result_helped` dans le
+journal. Mesurer si l'aide a servi demande de rattacher la recherche
+suivante à la précédente, ce qui est un sujet en soi — à reprendre si la
+question se pose vraiment.
 
 **Constat** — `ResultsList.vue:80` affiche « Aucun résultat ne correspond à ces
 critères. » et rien d'autre. L'administration, elle, dispose déjà de la liste
@@ -192,7 +208,23 @@ jamais si ce chantier a servi à quelque chose.
 
 ---
 
-## §3. Rétention des journaux
+## §3. Rétention des journaux — **fait le 2026-08-12**
+
+Livré : `log_retention.py`, tick quotidien dans `alert_worker.py` (verrou
+Redis dont la durée de vie EST l'intervalle), cinq durées réglables à
+chaud, `GET /admin/retention` pour prévisualiser. 9 tests contre un vrai
+Elasticsearch (le dixième exige Redis et se saute sans lui).
+
+**Écart avec le plan, dans le sens de la simplicité** : pas de panneau
+d'administration dédié. Les durées vivent dans `DEFAULT_RUNTIME`
+(`runtime_config.py`), dont le panneau « Paramètres opérationnels » rend
+déjà toutes les clés génériquement — il ne restait qu'à écrire les
+libellés d'aide. À noter pour la prochaine fois : `DEFAULT_RUNTIME` n'a
+PAS à rester identique entre les deux dépôts, chacun y déclare ce dont il
+est propriétaire (c'est écrit en tête du fichier).
+
+**Ajout non prévu** : la route d'aperçu. Un réglage destructeur qu'on ne
+peut pas prévisualiser ne se règle jamais, ou se règle une fois de trop.
 
 **Constat** — cinq index de journalisation grossissent **sans aucune purge** :
 `search_logs`, `nps_responses`, `suggestions`, `admin_audit_log`,

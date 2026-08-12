@@ -95,6 +95,13 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   pour l'option envisagée, et [PLAN-EVOLUTIONS.md](PLAN-EVOLUTIONS.md) — le
   chantier §5 (RAG réel ou recherche sémantique seule) y est resté hors
   plan, faute d'arbitrage sur le matériel qu'il suppose.
+- **Écran « aucun résultat » actionnable** : correction orthographique
+  (« vouliez-vous dire »), retrait d'un filtre chiffré à l'avance
+  (« sans le type PDF — 12 résultats »), et sources non sélectionnées où
+  il y a quelque chose. Chaque compte annoncé est calculé sous les droits
+  de l'utilisateur : cliquer donne bien ce nombre de résultats, jamais
+  une liste vide. La correction n'est proposée que si elle mène à des
+  documents qu'il peut voir.
 - **Mesure de satisfaction** : pouce haut/bas par recherche, popup NPS
   occasionnelle, suggestions libres, tracking de clic sur les résultats
   (toujours actif, signal passif) — chaque signal individuellement
@@ -175,6 +182,17 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   dépasse le total), et **aucun effectif minimum n'est appliqué** — dans
   un groupe d'une personne, ces chiffres la désignent. Voir
   `docsearch-api/README.md`, section « Statistiques par groupe ».
+- **Conservation des journaux** : les cinq index de journalisation
+  (recherches, connexions, audit, NPS, suggestions) sont purgés une fois
+  par jour au-delà d'une durée réglable par journal — 12 mois pour les
+  recherches et les connexions, 36 pour l'audit, 24 pour la satisfaction.
+  `0` vaut conservation illimitée. Deux motifs : le disque, dont le
+  franchissement du seuil de 95 % passe les index en lecture seule
+  pendant que le cluster reste « green », et la conservation de données
+  personnelles (identifiant, requêtes, adresse IP), qui doit avoir une
+  durée décidée. Les données utilisateur — mots-clés personnalisés,
+  collections — ne sont jamais concernées. Un aperçu montre ce qu'une
+  durée emporterait avant de la régler.
 - **Bascules d'interface** granulaires : assistant IA, pied de page,
   liens Administration/Statistiques, export, aide, collections,
   mots-clés personnalisés, alertes, tri, temps de recherche, badge

@@ -40,6 +40,20 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   puces de filtre. Reconnaît aussi dynamiquement les **facettes SQL
   personnalisées** de chaque source (ex: `bureau:Paris`), sans
   configuration supplémentaire.
+- **Autocomplétion** sous la barre de recherche : d'abord les recherches
+  passées de l'utilisateur, puis les auteurs et mots-clés du corpus
+  **qu'il a le droit de voir** (mêmes filtres ACL que la recherche
+  elle-même). Un auteur ou un mot-clé retenu devient une puce de filtre,
+  soit exactement l'état qu'aurait produit la facette cochée. Les
+  requêtes des *autres* utilisateurs ne sont jamais proposées — elles
+  nomment régulièrement un dossier que leur auteur est seul à connaître.
+  Désactivée par défaut.
+- **Historique de recherche personnel** (« Mes recherches récentes ») :
+  chacun retrouve ce qu'il a lui-même cherché, dédoublonné, et le
+  relance d'un clic. Aucune collecte nouvelle — la donnée est le journal
+  de recherche déjà écrit, jusqu'ici visible des seuls administrateurs.
+  Aucune route ne permet de lire l'historique de quelqu'un d'autre.
+  Désactivé par défaut.
 - **Facettes** : type de fichier, période (date de modification), source,
   auteur, mots-clés, dossier — plus des facettes personnalisées par
   source SQL (colonnes marquées "facette" dans son mapping).

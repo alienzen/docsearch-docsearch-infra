@@ -43,7 +43,7 @@ Ils valent pour les sept chantiers, et aucun n'est négociable.
 
 | Lot | Chantiers | Pourquoi ensemble |
 |---|---|---|
-| **A** | ~~7 permaliens~~ (fait), 8a historique, 1 autocomplétion | Aucun changement de mapping ni d'index. 8a produit la donnée que 1 consomme. Le meilleur rapport visible/risque. |
+| **A** | ~~7 permaliens, 8a historique, 1 autocomplétion~~ — **lot terminé le 2026-08-12** | Aucun changement de mapping ni d'index. 8a produit la donnée que 1 consomme. Le meilleur rapport visible/risque. |
 | **B** | 3 rétention, 2 zéro résultat | Hygiène. 3 protège le disque avant que les chantiers suivants n'écrivent davantage. |
 | **C** | 4 doublons, 6 synonymes et épinglés | **Les deux seuls qui touchent au mapping et aux réglages des index** : `close`/`open` pour l'un, réindexation pour l'autre. À grouper dans une seule fenêtre d'exploitation. |
 | **D** | 8b récemment consultés, 8c collections partagées | Confort, sans dépendance. |
@@ -52,7 +52,22 @@ Charge totale estimée : **17 à 22 jours-homme**, hors recette.
 
 ---
 
-## §1. Autocomplétion de la barre de recherche
+## §1. Autocomplétion de la barre de recherche — **fait le 2026-08-12**
+
+Livré : `GET /suggest` (`user_history.py`), `SearchSuggestions.vue`
+(combobox annotée ARIA, navigation clavier, anti-rebond 150 ms,
+annulation de la requête précédente), bascule `autocomplete_enabled`
+désactivée par défaut. 9 tests d'interface, 13 tests d'API contre un vrai
+Elasticsearch — dont le cloisonnement ACL des suggestions et
+l'échappement des préfixes hostiles.
+
+**Écart avec le plan ci-dessous, mesuré plutôt que supposé** : le volet
+corpus porte sur l'auteur et les mots-clés, **pas sur le nom de
+fichier**. Le coût d'un `include` régex tient à la cardinalité du champ
+(151 auteurs et 102 mots-clés distincts, contre 22 494 noms de fichier
+sur la pile de dev — un par document) : les deux premiers restent bornés
+quand le corpus grandit, le troisième croît avec lui. Le nom de fichier
+suppose donc un champ dédié et une réindexation, à traiter avec le lot C.
 
 **Constat** — aucun `suggest` nulle part dans `search_api.py`. Sur 4 000 000 de
 documents, l'utilisateur tape à l'aveugle, et l'indicateur de recherches sans
@@ -451,7 +466,15 @@ C'est là que se logent les régressions.
 
 Trois briques indépendantes, par coût croissant.
 
-### 8a. Historique de recherche personnel — 1 j
+### 8a. Historique de recherche personnel — **fait le 2026-08-12**
+
+Livré : `GET /me/searches`, `HistoriquePanel.vue` (entrée « Mes recherches
+récentes » à côté des recherches enregistrées), bascule
+`search_history_enabled` désactivée par défaut. Les recherches sans texte
+libre (filtres seuls) en sont écartées : le journal ne porte pas de quoi
+les rejouer — il n'enregistre pas les facettes personnalisées des sources
+SQL.
+
 
 La donnée existe déjà : `search_logs` porte `username` en `keyword` et `query`
 avec son sous-champ `.keyword` (pas de piège de type ici, contrairement à

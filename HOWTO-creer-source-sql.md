@@ -84,6 +84,22 @@ Chaque colonne à indexer doit apparaître dans `fields`, sous la forme
   ajoute une section de filtre dans la sidebar de recherche
   (`facet_label` optionnel pour le titre affiché, sinon le nom du
   champ ES est utilisé tel quel).
+- **Un même `es_field` ne peut apparaître qu'une fois.** Deux colonnes
+  envoyées vers le même champ sont désormais refusées à l'enregistrement,
+  avec le nom des deux colonnes fautives. La règle n'est pas cosmétique :
+  le mapping d'index comme le document sont construits par écrasement
+  successif, donc le dernier mappage gagnait — mais seulement à la
+  création de l'index, Elasticsearch refusant ensuite de changer le type
+  d'un champ existant. Le contrôle de facette ci-dessus devenait alors un
+  mensonge, validant le type *déclaré* pendant que l'agrégation frappait
+  le type *réel* : c'est ce qui a mis la recherche fédérée à zéro
+  résultat le 2026-08-13, une source déclarant `titre → title (text)`
+  puis `titre → title (keyword, facette)`.
+
+  ⚠️ Le contrôle porte sur les **nouvelles** écritures. Une source
+  enregistrée avant lui garde son mapping en double : la corriger demande
+  de supprimer le mappage inutile **et** de recréer l'index, le type d'un
+  champ déjà en place ne se changeant pas.
 
 Exemple de mapping :
 

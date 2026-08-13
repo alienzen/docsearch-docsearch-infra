@@ -19,6 +19,59 @@ Environment=cluster.name=docsearch-cluster
 Environment=discovery.type=single-node
 Environment=bootstrap.memory_lock=false
 Environment=xpack.security.enabled=false
+
+# ── Seuils disque ─────────────────────────────────────────────
+# Réglés le 2026-08-13. Défauts d'ES : low 85 %, high 90 %, flood stage
+# 95 %. Ici : low 85 % (inchangé) → high 95 % → flood stage 97 %.
+#
+# Les deux seuils font des choses DIFFÉRENTES, et c'est ce qui justifie
+# de les décaler :
+#   - au-delà du HIGH, ES cesse d'allouer tout shard NEUF. Le disque de
+#     cette VM stationnant autour de 90 %, le défaut bloquait la création
+#     du moindre index — les index de sonde des tests attendaient 30 s
+#     avant d'échouer, et la suite se bloquait sur les fichiers qui en
+#     créent un ;
+#   - au-delà du FLOOD STAGE, ES passe TOUS les index en lecture seule
+#     (`index.blocks.read_only_allow_delete`). Les écritures refusées le
+#     sont EN SILENCE côté docsearch-api : log_search, log_nps et
+#     events.record avalent leurs exceptions par contrat, donc la
+#     fonctionnalité disparaît sans erreur visible. La carte « État des
+#     composants » de l'administration est le seul endroit où ça se voit.
+#
+# Les garder distincts laisse une bande de 2 points entre « ES n'alloue
+# plus » (avertissement visible : les index neufs échouent bruyamment) et
+# « tout devient lecture seule » (panne silencieuse). Les confondre
+# supprimerait cet avertissement.
+#
+# ⚠️ Chaque `max_headroom` doit être REDONNÉ explicitement à côté de son
+# watermark. Sa valeur par défaut ne s'applique QUE tant que le watermark
+# correspondant n'est pas fixé à la main : fixer `high` seul remet
+# `high.max_headroom` à -1, et ES refuse alors la configuration entière
+# (« high disk max headroom [-1] is not set, while the low disk max
+# headroom is set [200gb] » — cause réelle noyée sous une vingtaine
+# d'exceptions `suppressed` identiques). L'ordre attendu est
+# low ≥ high ≥ flood_stage, soit 200GB ≥ 150GB ≥ 100GB : ce sont les
+# valeurs par défaut, reprises telles quelles.
+#
+# `flood_stage.frozen` (95 %) est laissé au défaut : il ne concerne que
+# le palier gelé (index montés depuis un snapshot), absent d'ici.
+#
+# Le « % » final n'a PAS à être doublé : systemd n'étend un spécificateur
+# que sur « % suivi d'une lettre connue », et un « % » en fin de valeur
+# reste littéral. Vérifié sur cette VM — `95%` et `95%%` donnent tous
+# deux `95%` dans l'environnement du service. Ne pas « corriger » en
+# `95%%` : ça marche aussi, mais ça laisse croire à un piège inexistant.
+#
+# Doublonne volontairement le réglage `persistent` posé sur le cluster :
+# celui-ci vit dans le volume es01-data et ne survivrait pas à une
+# installation neuve, que le déploiement hors ligne doit pourtant
+# reproduire à l'identique. Les deux doivent rester cohérents — le
+# réglage de cluster, s'il existe, l'emporte sur celui-ci.
+Environment=cluster.routing.allocation.disk.watermark.high=95%
+Environment=cluster.routing.allocation.disk.watermark.high.max_headroom=150GB
+Environment=cluster.routing.allocation.disk.watermark.flood_stage=97%
+Environment=cluster.routing.allocation.disk.watermark.flood_stage.max_headroom=100GB
+
 EnvironmentFile=/etc/docsearch/elasticsearch.env
 
 # Alias réseau : les autres conteneurs joignent ce nœud par le nom de

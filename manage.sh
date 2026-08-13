@@ -809,6 +809,45 @@ for nom, source in sources.items():
     log "Terminé. Le thésaurus se règle ensuite depuis le panneau d'administration, à chaud."
     ;;
 
+  migrer-exact)
+    SOURCE=""
+    APPLY=""
+    for arg in "${@:2}"; do
+        case "$arg" in
+          --apply) APPLY="1" ;;
+          *)       SOURCE="$arg" ;;
+        esac
+    done
+    if [ -z "$APPLY" ]; then
+        log "Simulation (aucune écriture). Ajouter --apply pour migrer."
+    else
+        warn "Chaque index est FERMÉ quelques secondes puis rouvert, puis ses documents sont RÉÉCRITS SUR PLACE pour remplir les sous-champs de recherche exacte."
+        warn "La réécriture est lancée en tâche de fond côté Elasticsearch : la commande rend la main avant sa fin. Suivre avec GET _tasks/<tâche>."
+    fi
+    init_run python3 -c "
+import json
+from indexer import migrer_exact
+from file_sources_config import get_sources as sources_fichiers
+from sql_sources_config import get_sources as sources_sql
+from web_sources_config import get_sources as sources_web
+
+# Les trois familles, pas seulement les sources fichiers : elles
+# partagent l'alias de recherche fédérée, et un index oublié ici serait
+# simplement muet en recherche exacte, sans la moindre erreur.
+toutes = {}
+for famille in (sources_fichiers, sources_sql, sources_web):
+    for nom, source in famille().items():
+        toutes[nom] = source
+if '$SOURCE':
+    toutes = {'$SOURCE': toutes['$SOURCE']}
+for nom, source in toutes.items():
+    print(json.dumps(
+        {'source': nom, **migrer_exact(source.es_index, appliquer=bool('$APPLY'))},
+        ensure_ascii=False,
+    ))
+"
+    ;;
+
   backfill-hashes)
     SOURCE=""
     APPLY=""
@@ -955,6 +994,8 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
     echo "                                        indexés correspondant au motif (avec confirmation)"
     echo "    migrer-synonymes [source]           Poser l'analyseur de synonymes sur les index"
     echo "                                        existants (close/open, PAS de réindexation)"
+    echo "    migrer-exact [source] [--apply]     Ouvrir la recherche exacte sur les index"
+    echo "                                        existants (close/open + réécriture sur place)"
     echo "    backfill-hashes [source] [--apply]  Calculer l'empreinte de contenu des documents"
     echo "                                        déjà indexés (détection de doublons)"
     echo "    backup          Snapshot Elasticsearch"

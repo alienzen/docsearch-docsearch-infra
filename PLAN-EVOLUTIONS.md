@@ -46,7 +46,7 @@ Ils valent pour les sept chantiers, et aucun n'est négociable.
 | **A** | ~~7 permaliens, 8a historique, 1 autocomplétion~~ — **lot terminé le 2026-08-12** | Aucun changement de mapping ni d'index. 8a produit la donnée que 1 consomme. Le meilleur rapport visible/risque. |
 | **B** | ~~3 rétention, 2 zéro résultat~~ — **lot terminé le 2026-08-12** | Hygiène. 3 protège le disque avant que les chantiers suivants n'écrivent davantage. |
 | **C** | ~~4 doublons, 6 synonymes et résultats épinglés~~ — **lot terminé le 2026-08-12** | **Les deux seuls qui touchent au mapping et aux réglages des index** : `close`/`open` pour l'un, réindexation pour l'autre. À grouper dans une seule fenêtre d'exploitation. |
-| **D** | 8b récemment consultés, 8c collections partagées | Confort, sans dépendance. |
+| **D** | ~~8b récemment consultés, 8c collections partagées~~ — **lot terminé le 2026-08-12** | Confort, sans dépendance. |
 
 Charge totale estimée : **17 à 22 jours-homme**, hors recette.
 
@@ -568,7 +568,12 @@ de requête, tri par occurrence la plus récente. Affichage dans le menu
 utilisateur, à côté des recherches enregistrées, avec « relancer » et
 « enregistrer cette recherche ». Alimente aussi le §1.
 
-### 8b. Documents récemment consultés — 1,5 j
+### 8b. Documents récemment consultés — **fait le 2026-08-12**
+
+Livré : `GET /me/recent-documents`, affichage sur l'écran d'accueil,
+bascule `recent_documents_enabled` désactivée par défaut. Les
+identifiants viennent des clics journalisés, les documents sont relus à
+travers l'ACL.
 
 La donnée existe aussi : les clics sont déjà enregistrés en `nested`
 (`doc_id`, `position`, `timestamp`) dans les documents de `search_logs`
@@ -579,7 +584,21 @@ depuis le clic ne doit plus apparaître, et un document supprimé de l'index doi
 disparaître sans erreur. À placer dans `EmptySearchState.vue`, qui occupe
 aujourd'hui un grand espace vide avant la première recherche.
 
-### 8c. Collections partagées — 2 à 3 j
+### 8c. Collections partagées — **fait le 2026-08-12**
+
+Livré : `shared_with` sur les collections, `POST /collections/{id}/share`
+et `.../duplicate`, affichage distinct des collections reçues, compte des
+documents inaccessibles, bascule `collections_shared_enabled` désactivée
+par défaut. 9 tests contre un vrai Elasticsearch.
+
+**Une borne ajoutée en écrivant** : on ne partage qu'avec un groupe dont
+on est soi-même membre. Sans elle, le premier usage serait de pousser une
+collection à toute l'organisation.
+
+**Un comportement existant confirmé plutôt que corrigé** :
+`delete_collection` est idempotent de longue date — la suppression par un
+non-propriétaire ne lève pas, elle ne fait rien. Le test l'énonce
+désormais ainsi, au lieu d'attendre une exception.
 
 `saved_collections.py` est strictement personnel. Ajouter `shared_with`
 (liste de groupes) et une visibilité `owner == user ||

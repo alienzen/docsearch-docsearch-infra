@@ -93,7 +93,15 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   périmètre ACL).
 - **Collections personnelles** ("Mes collections") : sélection et
   regroupement de documents par l'utilisateur, indépendamment de la
-  recherche.
+  recherche. **Partageables avec ses propres groupes** : partager donne
+  la référence, jamais le droit de lecture — chaque document reste
+  filtré par l'ACL de celui qui regarde, et l'écran annonce « 3
+  documents ne vous sont pas accessibles » plutôt que de masquer
+  l'écart. Écrire reste au propriétaire ; le destinataire duplique.
+  Désactivé par défaut.
+- **Derniers documents consultés** sur l'écran d'accueil : lus dans les
+  clics déjà journalisés, mais relus à travers l'ACL — un document dont
+  l'accès a été retiré depuis n'y réapparaît pas. Désactivé par défaut.
 - **Mots-clés personnalisés** ajoutables/retirables sur un document par
   les utilisateurs, réappliqués automatiquement à chaque réindexation.
 - **Assistant conversationnel (RAG)** — ⚠️ **maquette uniquement, non

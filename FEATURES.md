@@ -33,6 +33,13 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
 - **Recherche floue par défaut** (tolérance aux fautes de frappe) ou
   **recherche de phrase** en entourant la requête de guillemets : l'ordre
   et l'adjacence des mots sont alors respectés.
+  Le rattrapage corrige **une lettre**, et seulement **à partir de cinq
+  lettres** : en dessous, une lettre d'écart fait déjà un autre mot
+  (`loi`/`roi`), et au-delà d'une correction le vocabulaire administratif
+  français rapproche des termes qui n'ont rien à voir (`délégation` et
+  `dérogation`, `convention` et `conviction`). Ce plafond remplace le
+  réglage `AUTO` d'Elasticsearch, qui autorisait deux corrections dès six
+  caractères.
 - **Recherche exacte, aux accents et majuscules près** : une case à
   cocher près de la barre de recherche — ou l'opérateur `exact:` de la
   syntaxe avancée, qui produit le même critère — demande que les mots
@@ -89,6 +96,17 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   réindexation** — le moteur recharge ses analyseurs de recherche. La
   recherche entre guillemets reste littérale : « terme exact » veut dire
   exact.
+  **Une règle ajoute toujours des résultats, elle n'en retire jamais.**
+  Ce n'est pas gratuit : Lucene abandonne la tolérance aux fautes sur les
+  positions élargies par le thésaurus, si bien qu'une clause de recherche
+  naïve rendait MOINS de résultats après l'ajout d'une règle qu'avant
+  (mesuré : « congés » gagnait 2 documents et en perdait 5330). La
+  recherche interroge donc les champs ordinaires et les sous-champs
+  `.exact` en parallèle, ces derniers étant hors de portée du thésaurus —
+  voir `build_text_clause` dans `docsearch-api/app/search_query.py`.
+  ⚠️ Conséquence : sur un index non migré (pas de sous-champs `.exact`,
+  voir le point précédent), la tolérance aux fautes est muette au même
+  titre que la recherche exacte, et pour la même raison.
 - **Permalien de recherche** : l'état de la recherche (texte, facettes,
   période, tri, page) vit dans l'URL, donc une recherche s'envoie par
   lien, se met en signet et survit à F5 ; le bouton Précédent revient à

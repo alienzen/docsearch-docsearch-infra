@@ -69,6 +69,16 @@ sur la pile de dev — un par document) : les deux premiers restent bornés
 quand le corpus grandit, le troisième croît avec lui. Le nom de fichier
 suppose donc un champ dédié et une réindexation, à traiter avec le lot C.
 
+**Étendu le 2026-08-13 aux facettes SQL personnalisées** (toutes celles
+qui sont en `keyword`, plafonnées à six champs, réparties à tour de rôle
+avec les auteurs et les mots-clés) : mêmes agrégations, même requête,
++1-2 ms à chaud sur la pile de dev — y compris sur une facette à 995
+valeurs distinctes. Détail, garde-fous et mesures dans le README de
+`docsearch-api`. Reste hors périmètre, et le demeure : compléter la
+**valeur** d'un opérateur de syntaxe avancée (`bureau:Par` →
+`bureau:Paris`), la barre continuant de se taire dès qu'un opérateur est
+tapé.
+
 **Constat** — aucun `suggest` nulle part dans `search_api.py`. Sur 4 000 000 de
 documents, l'utilisateur tape à l'aveugle, et l'indicateur de recherches sans
 résultat de `stats.html` en porte la trace.

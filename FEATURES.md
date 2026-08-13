@@ -41,13 +41,17 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   personnalisées** de chaque source (ex: `bureau:Paris`), sans
   configuration supplémentaire.
 - **Autocomplétion** sous la barre de recherche : d'abord les recherches
-  passées de l'utilisateur, puis les auteurs et mots-clés du corpus
-  **qu'il a le droit de voir** (mêmes filtres ACL que la recherche
-  elle-même). Un auteur ou un mot-clé retenu devient une puce de filtre,
-  soit exactement l'état qu'aurait produit la facette cochée. Les
-  requêtes des *autres* utilisateurs ne sont jamais proposées — elles
+  passées de l'utilisateur, puis le corpus **qu'il a le droit de voir**
+  (mêmes filtres ACL que la recherche elle-même) — auteurs, mots-clés et
+  valeurs des **facettes SQL personnalisées** (« Bureau », « Fonction »…),
+  chaque champ ayant sa place dans la liste plutôt que le premier
+  servi. Une proposition retenue devient une puce de filtre sur SA
+  dimension, soit exactement l'état qu'aurait produit la facette cochée.
+  Les requêtes des *autres* utilisateurs ne sont jamais proposées — elles
   nomment régulièrement un dossier que leur auteur est seul à connaître.
-  Désactivée par défaut.
+  Le nom même d'une facette n'est proposé qu'aux membres des groupes
+  autorisés sur sa source, puisqu'il en décrit le schéma. Désactivée par
+  défaut.
 - **Historique de recherche personnel** (« Mes recherches récentes ») :
   chacun retrouve ce qu'il a lui-même cherché, dédoublonné, et le
   relance d'un clic. Aucune collecte nouvelle — la donnée est le journal

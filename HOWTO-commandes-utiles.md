@@ -491,6 +491,51 @@ Signe qu'on est dans ce cas plutôt que face à un vrai bug CSS :
 `getComputedStyle(document.documentElement).getPropertyValue('--un-token-ajouté')`
 renvoie `""` juste après un rebuild.
 
+## Migrations d'index
+
+Trois fonctionnalités livrées le 2026-08-12 et le 2026-08-13 s'appuient
+sur des réglages ou des champs que les index **déjà créés** n'ont pas.
+Sur une installation neuve, `manage.sh init` les pose lui-même et il n'y
+a rien à faire ici. Sur une installation existante, tant que la migration
+n'est pas passée, la fonctionnalité reste **inerte et silencieuse** —
+aucune de ces trois-là ne produit d'erreur quand son champ manque.
+
+| Commande | Ce qu'elle débloque | Coût |
+|---|---|---|
+| `migrer-synonymes [source]` | thésaurus métier | fermeture/réouverture de l'index, quelques secondes ; **aucune** réindexation |
+| `migrer-exact [source] --apply` | recherche exacte (case et opérateur `exact:`) | fermeture/réouverture, puis réécriture sur place des documents en tâche de fond |
+| `backfill-hashes [source] --apply` | rapport de doublons | relecture des fichiers sur disque, sans Tika |
+
+```bash
+sudo ./manage.sh migrer-synonymes
+sudo ./manage.sh migrer-exact --apply
+sudo ./manage.sh backfill-hashes --apply
+```
+
+`migrer-exact` et `backfill-hashes` **simulent par défaut** : sans
+`--apply`, elles montrent ce qu'elles feraient sans rien écrire.
+`migrer-synonymes` n'a pas de simulation — elle est idempotente et
+rejouable sans dommage. Les trois acceptent un nom de source pour ne
+traiter que celle-là.
+
+Quelques précisions qui évitent de croire la migration ratée :
+
+- **`migrer-synonymes` ne parcourt que les sources fichiers**, et c'est
+  voulu : les index SQL et web ne reçoivent pas le filtre de synonymes.
+- **`migrer-exact` couvre les trois familles** (fichiers, SQL, web), qui
+  partagent l'alias de recherche fédérée — un index oublié serait
+  simplement muet en recherche exacte. Elle rend la main **avant** la fin
+  de la réécriture, lancée en tâche de fond côté Elasticsearch : suivre
+  avec `GET _tasks/<tâche>`.
+- **`backfill-hashes` ignore les membres d'archive** (`a.zip::note.pdf`),
+  qui ne désignent aucun fichier sur disque ; leur empreinte se remplira
+  à la prochaine réindexation de l'archive. Elle ne touche que les
+  documents dépourvus d'empreinte, donc une interruption se reprend en
+  relançant.
+
+⚠️ Le thésaurus se règle ensuite depuis le panneau d'administration, **à
+chaud** : la migration ne pose que l'analyseur, pas les règles.
+
 ## Rétro-remplir les groupes des journaux
 
 Les statistiques par groupe reposent sur un champ `groups` écrit au

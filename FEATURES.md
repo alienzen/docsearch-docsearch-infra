@@ -31,7 +31,24 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   restreint à ce que l'utilisateur courant a le droit de voir (public,
   propriétaire, utilisateurs et groupes autorisés — POSIX et/ou LDAP/AD).
 - **Recherche floue par défaut** (tolérance aux fautes de frappe) ou
-  **recherche exacte** en entourant la requête de guillemets.
+  **recherche de phrase** en entourant la requête de guillemets : l'ordre
+  et l'adjacence des mots sont alors respectés.
+- **Recherche exacte, aux accents et majuscules près** : une case à
+  cocher près de la barre de recherche — ou l'opérateur `exact:` de la
+  syntaxe avancée, qui produit le même critère — demande que les mots
+  soient trouvés **tels qu'écrits**, sans racinisation, sans mots vides,
+  sans synonymes et sans tolérance aux fautes. `Congrès`, `congres` et
+  `CONGRES` restent une seule et même requête, mais `délégations` cesse
+  de répondre à `délégation`. Les deux dimensions sont indépendantes et
+  se combinent : les guillemets portent sur l'enchaînement des mots
+  (« dans cet ordre »), la case sur la façon dont chacun est comparé
+  (« tel qu'écrit »).
+  ⚠️ Les sous-champs interrogés dans ce mode n'existent que sur les index
+  **migrés**, et un champ absent du mapping ne lève aucune erreur : il ne
+  matche rien. Une source qui n'a pas reçu `./manage.sh migrer-exact
+  --apply` est donc silencieusement muette en recherche exacte (voir
+  [HOWTO-commandes-utiles.md](HOWTO-commandes-utiles.md), § Migrations
+  d'index).
 - **Recherche restreinte à un champ** (`search_in`) : tout, titre, auteur
   ou chemin de fichier.
 - **Syntaxe avancée dans la barre de recherche** : opérateurs

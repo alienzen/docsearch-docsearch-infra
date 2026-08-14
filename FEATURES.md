@@ -238,7 +238,12 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   Rapport calculé une fois par jour (l'agrégation parcourt l'index) et
   recalculable à la demande. Les documents indexés avant cette
   fonctionnalité se rattrapent par `./manage.sh backfill-hashes`, qui
-  relit les fichiers sans appeler Tika.
+  relit les fichiers sans appeler Tika. L'empreinte elle-même n'apparaît
+  sur la carte de résultat et la fiche détail **que pour les
+  administrateurs** : 64 caractères hexadécimaux n'apprennent rien à un
+  utilisateur, quand ils servent à rapprocher un document d'une ligne du
+  rapport. Choix d'affichage et non contrôle d'accès — la valeur reste
+  dans la réponse de l'API.
 - **Purge d'index** ciblée par motif de chemin (dry-run par défaut) et
   **déclenchement de scan** d'indexation à la demande.
 - **Statistiques de recherche** (`stats.html`) : volumétrie, requêtes
@@ -277,9 +282,15 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   durée emporterait avant de la régler.
 - **Bascules d'interface** granulaires : assistant IA, pied de page,
   liens Administration/Statistiques, export, aide, collections,
-  mots-clés personnalisés, alertes, tri, temps de recherche, badge
-  utilisateur, animation d'accueil — chacune indépendamment
-  activable/désactivable, effectives immédiatement.
+  mots-clés personnalisés, alertes, tri, temps de recherche, pourcentage
+  de pertinence, badge utilisateur, animation d'accueil — chacune
+  indépendamment activable/désactivable, effectives immédiatement.
+  Le **pourcentage de pertinence** est le badge (« 87 % ») porté par
+  chaque carte de résultat : un score relatif à une requête se lit mal
+  sans savoir ce qu'il mesure, et « 40 % » sur un document pourtant juste
+  inquiète plus qu'il n'informe. Le masquer ne touche que l'affichage —
+  les résultats restent classés dans le même ordre. Activé par défaut,
+  comme toute bascule qui masque une fonctionnalité déjà en place.
 - **Personnalisation** : bloc-marque, titre et sous-titre d'en-tête,
   favicon, description et mention de bas de page, chemin affiché par le
   bouton « Copier le chemin ».

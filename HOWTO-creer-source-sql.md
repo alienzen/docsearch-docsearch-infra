@@ -101,6 +101,33 @@ Chaque colonne à indexer doit apparaître dans `fields`, sous la forme
   de supprimer le mappage inutile **et** de recréer l'index, le type d'un
   champ déjà en place ne se changeant pas.
 
+- **Ajouter une colonne à une source déjà indexée** ne demande pas de
+  recréer l'index : le mapping est réappliqué à chaque passage, donc le
+  champ nouveau est déclaré avant le premier document qui le porte
+  (ajouter un champ est additif — pas de réindexation, aucune donnée
+  touchée). Jusqu'au 2026-08-14 le mapping n'était posé qu'à la création
+  de l'index : la colonne ajoutée n'était jamais déclarée, Elasticsearch
+  la mappait dynamiquement en `text`, et une facette déclarée `keyword`
+  dessus passait le contrôle ci-dessus — qui valide le type *déclaré* —
+  pour échouer ensuite à l'agrégation, shard en échec et recherche
+  fédérée refusée.
+
+  ⚠️ **Changer le type d'un champ déjà mappé reste impossible** :
+  Elasticsearch refuse alors la requête entière, y compris les autres
+  champs qu'elle porte. Le conflit est **journalisé, pas levé** —
+  `journalctl -u docsearch-sql-worker`, le nom du champ fautif y figure —
+  car cette pose de mapping ouvre chaque passage : lever y arrêterait
+  toute l'indexation de la source jusqu'à intervention. Conséquence : un
+  type corrigé dans le formulaire n'a **aucun effet visible** tant que
+  l'index n'est pas recréé, ou la source pointée vers un nouvel
+  `es_index`. Une source SQL étant intégralement reconstruite au passage
+  suivant, rien n'est perdu.
+
+- Le mapping est `"dynamic": "strict"` : un document portant un champ non
+  déclaré échoue à l'indexation au lieu d'être mappé au jugé. En
+  fonctionnement normal aucun document n'est concerné — une ligne SQL ne
+  porte que les champs déclarés, plus `source` et `indexed_at`.
+
 Exemple de mapping :
 
 ```json
@@ -140,6 +167,12 @@ texte), puis le tableau de mapping colonnes → champs ES ligne par
 ligne (bouton "+ Ajouter une colonne") — plus besoin d'écrire le JSON
 du mapping à la main. Le même formulaire sert à la création et à la
 modification d'une source existante.
+
+Une ligne de mapping **à moitié remplie** (colonne SQL ou champ ES
+manquant) bloque l'enregistrement et est désignée par son numéro ; une
+ligne entièrement vide reste ignorée. Auparavant la ligne incomplète
+était écartée en silence : l'API répondait 200, le formulaire se
+fermait, et la colonne saisie avait disparu sans un mot.
 
 ### c. API directement
 
@@ -241,7 +274,9 @@ curl -b ~/.docsearch-cookies http://localhost:8000/admin/all-sources | jq
   de route dédiée — repasser par le formulaire d'édition de l'admin UI
   (pré-rempli) ou réappeler `add-sql-source`/`POST /admin/sql-sources`
   avec l'ensemble des champs (l'entrée est remplacée en entier, voir
-  l'avertissement à l'étape 3).
+  l'avertissement à l'étape 3). Une **colonne ajoutée** prend effet
+  seule, au passage suivant ; **changer le type** d'un champ déjà mappé
+  demande de recréer l'index — voir l'étape 2.
 
 ## Retirer une source SQL
 

@@ -94,6 +94,12 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   Sélection multiple combinée en OU dans une même facette, sauf les
   mots-clés (champ multi-valué) combinés en ET : cocher un second
   mot-clé restreint aux documents qui portent les deux.
+  La colonne **ne montre que les facettes que portent les sources
+  sélectionnées** : chercher dans le seul annuaire SQL n'affiche plus
+  « Type de fichier », « Auteur », « Mots-clés », « Dossier » ni la
+  période — aucune de ces colonnes n'existe pour ce type de source. Une
+  source fichier les rétablit toutes ; sans sélection de source, elles
+  sont toutes là.
 - **Tri** des résultats (pertinence, date...).
 - **Thésaurus métier** : les sigles et appellations qui désignent la même
   chose (« DRH » et « direction des ressources humaines », ancien et

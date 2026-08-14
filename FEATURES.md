@@ -81,6 +81,12 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   relance d'un clic. Aucune collecte nouvelle — la donnée est le journal
   de recherche déjà écrit, jusqu'ici visible des seuls administrateurs.
   Aucune route ne permet de lire l'historique de quelqu'un d'autre.
+  L'effacer **anonymise** les recherches passées dans le journal — compte
+  et adresse IP ôtés définitivement, requête, résultats et groupes
+  conservés pour les statistiques, qui ne nomment alors plus personne
+  (un groupe désigne un service, pas quelqu'un).
+  Le geste emporte du même coup les documents consultés antérieurs, les
+  clics étant enregistrés dans le document de leur recherche.
   Désactivé par défaut.
 - **Facettes** : type de fichier, période (date de modification), source,
   auteur, mots-clés, dossier — plus des facettes personnalisées par
@@ -143,7 +149,13 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   Désactivé par défaut.
 - **Derniers documents consultés** sur l'écran d'accueil : lus dans les
   clics déjà journalisés, mais relus à travers l'ACL — un document dont
-  l'accès a été retiré depuis n'y réapparaît pas. Désactivé par défaut.
+  l'accès a été retiré depuis n'y réapparaît pas. Les effacer
+  **supprime** ces clics du journal — quel document, quand, à quelle
+  position — et n'en garde que le nombre, pour que les recherches qui y
+  ont mené ne passent pas pour infructueuses. Suppression et non
+  anonymisation : le clic étant enregistré dans le document de sa
+  recherche, l'anonymiser aurait emporté un historique de recherche que
+  l'utilisateur n'a pas demandé d'effacer. Désactivé par défaut.
 - **Mots-clés personnalisés** ajoutables/retirables sur un document par
   les utilisateurs, réappliqués automatiquement à chaque réindexation.
 - **Assistant conversationnel (RAG)** — ⚠️ **maquette uniquement, non

@@ -33,6 +33,11 @@ Requires=docsearch-kafka-ready.service
 
 [Container]
 ContainerName=docsearch-plugin-@NOM@
+# Alias réseau court et prévisible : c'est ce nom que le fragment nginx
+# du module vise (proxy_pass http://plugin-@NOM@:<port>/). Passer par le
+# nom de conteneur marcherait aussi, mais lierait le routage à une
+# convention de nommage d'unité.
+PodmanArgs=--network-alias=plugin-@NOM@
 # Étiquette explicite, jamais « latest » : le manifeste l'exige, et la
 # production reçoit ses images par transfert manuel.
 Image=@IMAGE@

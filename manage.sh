@@ -285,6 +285,53 @@ print(json.dumps([s['nom'] for s in m['sources']]))
 "
 }
 
+# ── Routage /ext/<nom>/ des modules à capacité service_web ────
+# Un fragment nginx par module, dans un répertoire monté en lecture seule
+# dans les conteneurs nginx. Pourquoi des fragments générés plutôt qu'un
+# `location` générique avec variable : un proxy_pass qui contient une
+# variable oblige nginx à résoudre le nom À CHAQUE REQUÊTE, donc à
+# connaître un `resolver` — l'adresse du DNS de podman, qui change avec le
+# réseau. Un fragment statique par module ne dépend de rien, et se relit
+# en clair pour diagnostiquer.
+NGINX_PLUGINS_DIR="$CONFIG_DIR/nginx/plugins"
+
+ecrire_fragment_nginx() {
+    local nom="$1" port="$2"
+    mkdir -p "$NGINX_PLUGINS_DIR"
+    cat > "$NGINX_PLUGINS_DIR/$nom.conf" <<EOF
+# Généré par « ./manage.sh plugin install » — ne pas modifier à la main,
+# la prochaine installation du module $nom écraserait ce fichier.
+location /ext/$nom/ {
+    # La barre oblique finale de proxy_pass RETIRE le préfixe : le module
+    # reçoit /ask, pas /ext/$nom/ask. Il n'a donc pas à connaître son
+    # point de montage — et le changer ne casse pas son code.
+    proxy_pass http://plugin-$nom:$port/;
+    proxy_set_header Host              \$host;
+    proxy_set_header X-Real-IP         \$remote_addr;
+    proxy_set_header X-Forwarded-For   \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    # Le cookie de session traverse (comportement par défaut) : c'est lui
+    # que le module vérifie contre le JWKS de l'API. Aucun en-tête
+    # d'identité n'est posé ici — le proxy n'authentifie pas.
+}
+EOF
+}
+
+recharger_nginx() {
+    local recharge=0
+    for conteneur in docsearch-ui-vue docsearch-nginx; do
+        $PODMAN container exists "$conteneur" 2>/dev/null || continue
+        if $PODMAN exec "$conteneur" nginx -s reload >/dev/null 2>&1; then
+            log "$conteneur rechargé."
+            recharge=1
+        else
+            warn "$conteneur : rechargement à chaud refusé — redémarrage."
+            systemctl restart "$conteneur" 2>/dev/null && recharge=1
+        fi
+    done
+    [ "$recharge" -eq 1 ] || warn "Aucun conteneur nginx en fonctionnement : le routage /ext/ prendra effet au prochain démarrage."
+}
+
 # Écrit l'unité Quadlet du module depuis quadlet/plugin.container.in.
 # awk et non sed : la liste des secrets produit un nombre variable de
 # lignes, ce qu'une substitution sed ne sait pas faire lisiblement.
@@ -1311,6 +1358,13 @@ for source in m['sources']:
         ecrire_unite_plugin "$PLG_NOM" "$PLG_IMAGE" "$PLG_CPUS" "$PLG_MEM" "$PLG_SECRETS"
         systemctl daemon-reload
 
+        PLG_PORT="$(MANIFESTE_JSON="$MANIFESTE" python3 -c "import json,os; print(json.loads(os.environ['MANIFESTE_JSON'])['port'] or '')")"
+        if [ -n "$PLG_PORT" ]; then
+            ecrire_fragment_nginx "$PLG_NOM" "$PLG_PORT"
+            recharger_nginx
+            log "Routage : /ext/$PLG_NOM/ → plugin-$PLG_NOM:$PLG_PORT"
+        fi
+
         log "Module « $PLG_NOM » $PLG_VERSION installé."
         log "Démarrer : sudo ./manage.sh plugin enable $PLG_NOM"
         warn "Ce conteneur est sur docsearch-net, où Elasticsearch et Redis répondent sans
@@ -1387,6 +1441,13 @@ for nom in json.loads(os.environ['SOURCES_JSON']):
         systemctl disable --now "docsearch-plugin-$PLG_NOM" 2>/dev/null || true
         rm -f "$QUADLET_DIR/docsearch-plugin-$PLG_NOM.container"
         systemctl daemon-reload
+        # Le fragment nginx d'abord : un `location` qui pointe vers un
+        # conteneur disparu rend 502 au lieu de 404, ce qui se diagnostique
+        # bien plus mal.
+        if [ -f "$NGINX_PLUGINS_DIR/$PLG_NOM.conf" ]; then
+            rm -f "$NGINX_PLUGINS_DIR/$PLG_NOM.conf"
+            recharger_nginx
+        fi
 
         SOURCES_JSON="$(sources_du_manifeste "$PLG_NOM")"
         export SOURCES_JSON

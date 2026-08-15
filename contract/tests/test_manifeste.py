@@ -93,10 +93,12 @@ def test_image_sans_etiquette_refusee():
 
 
 def test_capacite_non_servie_refusee():
-    """`service_web` est prévue par le §2 du plan et n'est pas encore
-    routée : l'accepter produirait un module à moitié installé."""
+    """Une capacité que le cœur ne sait pas router produirait un module à
+    moitié installé : il s'annonce, rien ne l'écoute, et rien ne le dit.
+    (`service_web` l'a été jusqu'au lot 3 — c'est ainsi que la liste
+    fermée gagne sa place.)"""
     with pytest.raises(ContratInvalide, match="non servie"):
-        manifeste.valider_manifeste(base(capacites=["ingestion", "service_web"]))
+        manifeste.valider_manifeste(base(capacites=["ingestion", "ordonnancement"]))
 
 
 def test_capacites_vides_refusees():
@@ -150,3 +152,36 @@ def test_ressources_partielles_completees_par_defaut():
     d'ingestion : les bornes existent même quand le manifeste se tait."""
     m = manifeste.valider_manifeste(base(ressources={"memoire": "256m"}))
     assert m["ressources"] == {"cpus": manifeste.RESSOURCES_DEFAUT["cpus"], "memoire": "256m"}
+
+
+# ── Capacité service_web (lot 3) ─────────────────────────────
+
+def test_service_web_exige_un_port():
+    """C'est vers ce port que le proxy enverra /ext/<nom>/ — sans lui, le
+    module s'installerait sans être joignable."""
+    with pytest.raises(ContratInvalide, match="'port'"):
+        manifeste.valider_manifeste(base(capacites=["service_web"], sources=[]))
+
+
+def test_service_web_avec_port_accepte():
+    m = manifeste.valider_manifeste(base(capacites=["service_web"], sources=[], port=8080))
+    assert m["port"] == 8080
+
+
+def test_port_sans_service_web_refuse():
+    with pytest.raises(ContratInvalide, match="n'a de sens"):
+        manifeste.valider_manifeste(base(port=8080))
+
+
+@pytest.mark.parametrize("port", [80, 70000, "huit-mille"])
+def test_port_invalide_refuse(port):
+    with pytest.raises(ContratInvalide, match="port"):
+        manifeste.valider_manifeste(base(capacites=["service_web"], sources=[], port=port))
+
+
+def test_les_deux_capacites_ensemble():
+    """Un module peut très bien pousser des documents ET exposer un
+    écran — l'assistant de recherche ne fait que le second."""
+    m = manifeste.valider_manifeste(base(capacites=["ingestion", "service_web"], port=8080))
+    assert m["capacites"] == ["ingestion", "service_web"]
+    assert m["sources"][0]["plugin"] == "jira"

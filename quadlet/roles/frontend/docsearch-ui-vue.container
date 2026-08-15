@@ -14,6 +14,11 @@ Image=localhost/docsearch/ui-vue:latest
 Network=docsearch-net.network
 PodmanArgs=--network-alias=ui-vue
 
+# Fragments de routage des modules complémentaires (/ext/<nom>/),
+# écrits par « ./manage.sh plugin install ». Le répertoire peut être
+# vide : nginx accepte un include à joker sans correspondance.
+Volume=/etc/docsearch/nginx/plugins:/etc/nginx/plugins:ro
+
 [Service]
 Restart=always
 RestartSec=10

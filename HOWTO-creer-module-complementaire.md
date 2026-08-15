@@ -57,10 +57,11 @@ Ce n'est pas une liste de bonnes pratiques, c'est ce que le cœur refuse :
   que sa majeure est `0`, la **mineure doit correspondre** à celle du cœur
   (`contract/docsearch_contract/version.py`) : la forme du contrat n'est
   pas encore figée.
-- **`capacites`** — aujourd'hui `ingestion` seulement. `service_web`
-  (écrans et routes sous `/ext/<nom>/`) est prévue par le §2 du plan et
-  **n'est pas encore routée** : la déclarer fait refuser le manifeste,
-  plutôt que d'installer un module à moitié servi.
+- **`capacites`** — `ingestion` (pousser des documents) et `service_web`
+  (exposer des routes sous `/ext/<nom>/`, voir plus bas). Un module peut
+  demander les deux, ou une seule. Toute autre valeur fait refuser le
+  manifeste : une capacité que le cœur ne route pas produirait un module
+  qui s'annonce sans que rien ne l'écoute.
 - **`sources`** — une source n'y déclare pas son `plugin` : c'est `nom`
   qui en décide. Un manifeste ne peut donc pas revendiquer la source d'un
   autre module.
@@ -121,6 +122,57 @@ plus de la moitié d'un index, mais il vaut mieux ne pas compter dessus.
 `id` doit être **stable** : c'est ce qui distingue une mise à jour d'une
 création. Un identifiant qui change à chaque passe crée un doublon par
 passage, puis les fait tous supprimer par la réconciliation suivante.
+
+## 2 bis. Exposer des routes (`service_web`)
+
+Un module peut servir ses propres écrans et ses propres appels. Il déclare
+alors la capacité `service_web` et le `port` qu'il écoute **dans son
+conteneur** :
+
+```json
+{"capacites": ["service_web"], "port": 8080, "sources": []}
+```
+
+`./manage.sh plugin install` écrit un fragment nginx dans
+`/etc/docsearch/nginx/plugins/<nom>.conf` et recharge le proxy. Le module
+devient joignable sous `/ext/<nom>/`.
+
+⚠️ **Le préfixe est retiré avant d'arriver au module** : une requête sur
+`/ext/assistant/ask` lui parvient comme `/ask`. Il n'a donc pas à
+connaître son point de montage, et le changer ne casse pas son code.
+
+### Vérifier la session
+
+Le cookie de session traverse le proxy. **Le module est responsable de le
+vérifier** — aucun en-tête d'identité n'est posé par le proxy, et un
+module reste de toute façon joignable directement sur le réseau de la
+pile.
+
+```
+1. lire le cookie docsearch_access
+2. récupérer les clés publiques : GET http://api:8000/auth/.well-known/jwks.json
+3. vérifier la signature RS256 avec la clé dont le `kid` correspond
+4. vérifier les revendications — voir contract/docsearch_contract/jetons.py
+```
+
+Le point 4 est celui qu'on oublie, et le contrat le tient en un appel :
+`verifier_revendications(payload)` contrôle `token_type` (un jeton de
+**rafraîchissement** présenté comme un jeton d'accès est le contournement
+classique), l'émetteur, l'audience, et rend le `sub`.
+
+### Lire des documents
+
+**Jamais Elasticsearch.** Le module rappelle l'API du cœur en portant le
+cookie de l'utilisateur : l'ACL s'applique sans qu'il ait à la connaître,
+et il ne peut pas s'en écarter.
+
+```python
+reponse = httpx.post(
+    "http://api:8000/search",
+    json={"q": question, "size": 5},
+    cookies={"docsearch_access": jeton_de_l_utilisateur},
+)
+```
 
 ## 3. L'archive de livraison
 

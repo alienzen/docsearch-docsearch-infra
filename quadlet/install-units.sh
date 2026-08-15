@@ -182,7 +182,7 @@ case "$ROLE" in
       install_config "$HERE/common/docsearch.env.example"      "$CONFIG_DIR/docsearch.env"
       install_config "$HERE/common/elasticsearch.env.example"  "$CONFIG_DIR/elasticsearch.env"
       # Configurations de crawl + modèle du proxy de simulation
-      run mkdir -p "$CONFIG_DIR/crawlers" "$CONFIG_DIR/nginx"
+      run mkdir -p "$CONFIG_DIR/crawlers" "$CONFIG_DIR/nginx" "$CONFIG_DIR/nginx/plugins"
       run cp -r "$INFRA/crawlers/." "$CONFIG_DIR/crawlers/"
       run install -m 0644 "$INFRA/nginx/dev-user-proxy.conf.template" "$CONFIG_DIR/nginx/dev-user-proxy.conf.template"
       ;;
@@ -214,7 +214,7 @@ case "$ROLE" in
           run install -m 0644 "$f" "$QUADLET_DIR/"
       done
       install_config "$HERE/common/docsearch.env.example" "$CONFIG_DIR/docsearch.env"
-      run mkdir -p "$CONFIG_DIR/nginx/certs"
+      run mkdir -p "$CONFIG_DIR/nginx/certs" "$CONFIG_DIR/nginx/plugins"
       install_config "$INFRA/nginx/nginx.conf" "$CONFIG_DIR/nginx/nginx.conf"
       warn "Déposer le certificat TLS dans $CONFIG_DIR/nginx/certs (cert.pem, key.pem)."
       ;;

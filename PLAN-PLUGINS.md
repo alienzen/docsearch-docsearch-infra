@@ -333,6 +333,35 @@ ni via `/document/{id}`.
 
 ## §2. Fonctionnalités — service dorsal sous `/ext/`
 
+> **Plomberie faite le 2026-08-15 (lot 3) ; le module de démonstration
+> reste à écrire.**
+>
+> Livré : capacité `service_web` et clé `port` du manifeste (contrat
+> 0.4.0), `jetons.py` — ce qu'un module doit vérifier d'une session —,
+> l'écriture d'un fragment nginx par module à l'installation et son
+> rechargement, le montage du répertoire de fragments dans les deux
+> conteneurs nginx, `include /etc/nginx/plugins/*.conf` dans les DEUX
+> `nginx.conf`, et `ext/` dans `API_ROUTES` de `vite.config.ts`. 16 tests
+> de plus (87 dans `contract/`).
+>
+> Choix de conception : un fragment **généré par module** plutôt qu'un
+> `location` générique à variable. Un `proxy_pass` contenant une variable
+> oblige nginx à résoudre le nom à chaque requête, donc à connaître un
+> `resolver` — l'adresse du DNS de podman, qui change avec le réseau. Un
+> fragment statique ne dépend de rien et se relit en clair pour
+> diagnostiquer.
+>
+> **Ce qui manque, et ce document le réclame explicitement** (« le lot 3
+> doit livrer un vrai plugin, pas un squelette ») : l'assistant du §2.2
+> lui-même, et le branchement de `ChatPage.vue` dessus. Tant qu'aucun
+> module n'a emprunté ce chemin de bout en bout, le contrat de jeton et le
+> retrait du préfixe `/ext/<nom>/` sont écrits, pas éprouvés.
+>
+> ⚠️ `include` a été ajouté dans `docsearch-ui-vue/nginx.conf`, qui est
+> **copié dans l'image** : le routage `/ext/` n'existe qu'après un
+> `./manage.sh build ui` et un redémarrage. Les fragments, eux, sont
+> montés depuis l'hôte et prennent effet à chaud.
+
 Le plugin expose son propre service HTTP dans son conteneur ; Nginx route
 `/ext/<nom>/` vers lui.
 

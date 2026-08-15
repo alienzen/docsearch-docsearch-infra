@@ -19,6 +19,7 @@ qui n'a pas à charger l'API pour savoir ce qu'une source est.
 | `sources.py` | Vue générique des registres de sources : `SourceEntry`, `visible_to()`, `searchable_names()`, `collectable_names()`, `find()` |
 | `plugins.py` | Déclaration d'une source portée par un module complémentaire : `PluginSource`, politiques d'ACL, `valider_declaration()` |
 | `documents.py` | Enveloppe des messages poussés sur `documents-ready`, construction du document indexé, application de l'ACL |
+| `manifeste.py` | Déclaration d'un module installable : image, capacités, secrets, bornes de ressources, sources déclarées |
 | `erreurs.py` | `ContratInvalide`, seule exception du contrat |
 | `version.py` | `CONTRACT_VERSION` — version sémantique du contrat |
 
@@ -70,6 +71,7 @@ au Dockerfile ni au `sys.path` des tests.
 |---|---|
 | `docsearch-api` | `sources.py` — `search_api.py` et `search_query.py`, via `app/source_registries.py` ; `plugins.py` — `plugin_sources_config.py` |
 | `docsearch-ingestion` | `plugins.py` et `documents.py` — `plugin_sources_config.py`, `plugin_worker.py`, `plugin_indexer.py` |
+| `docsearch-infra` | `manifeste.py` — `./manage.sh plugin install`, qui valide **sans conteneur ni pile démarrée** : la source de vérité du contrat est ici même |
 
 C'est le contrat qui rend `plugin_sources_config.py` supportable en deux
 exemplaires : les règles — validation, politiques d'ACL, valeurs par

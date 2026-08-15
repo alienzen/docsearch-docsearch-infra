@@ -450,6 +450,41 @@ Si le besoin revient, il faudra l'entendre comme « le contrat de §1/§2 est tr
 
 ## §5. Cycle de vie, distribution, secrets
 
+> **Fait le 2026-08-15** (lot 2).
+>
+> Livré : `manifeste.py` dans le contrat (version 0.3.0),
+> `quadlet/plugin.container.in`, `./manage.sh plugin
+> install|list|enable|disable|remove`, la validation du modèle d'unité par
+> `valider-unites.sh`, et
+> [HOWTO-creer-module-complementaire.md](HOWTO-creer-module-complementaire.md).
+> 22 tests de manifeste supplémentaires (71 en tout dans `contract/`).
+>
+> **Deux écarts avec ce qui suit, tous deux dans le sens de la
+> prudence :**
+>
+> 1. **Pas d'`EnvironmentFile=/etc/docsearch/docsearch.env` dans l'unité
+>    générée**, contrairement à toutes les autres unités de la pile. Ce
+>    fichier porte le mot de passe de liaison LDAP, les DSN des bases SQL
+>    et la clé qui les chiffre : le donner à du code tiers réglait la
+>    question de l'accès à Kafka en ouvrant tout le reste. Le module reçoit
+>    `KAFKA_BOOTSTRAP`, `DOCSEARCH_TOPIC` et `DOCSEARCH_PLUGIN`, substitués
+>    à l'installation, et ses propres secrets par `podman secret`.
+> 2. **`capacites` n'accepte que `ingestion`.** `service_web` (§2) n'est
+>    pas routée : l'accepter installerait un module à moitié servi. Elle
+>    s'ajoutera avec le lot 3.
+>
+> ⚠️ **Limite connue, et elle n'est pas mineure.** Le conteneur d'un
+> module est sur `docsearch-net`, où Elasticsearch et Redis répondent
+> **sans authentification** (`xpack.security.enabled=false`). L'invariant 1
+> — « un plugin n'écrit jamais dans Elasticsearch » — est donc tenu par le
+> contrat, pas par le réseau : rien n'empêche techniquement un module
+> d'écrire directement dans un index. La correction est un réseau dédié
+> aux modules, avec le seul broker Kafka rattaché aux deux ; elle touche à
+> l'unité Kafka et à ses listeners annoncés, donc elle demande sa propre
+> fenêtre d'exploitation et une validation sur pile démarrée — c'est
+> pourquoi elle n'a pas été faite au passage. **Jusque-là, n'installer que
+> des modules dont on maîtrise le code.**
+
 Une commande, alignée sur l'outillage existant :
 
 ```bash

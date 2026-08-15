@@ -1,0 +1,60 @@
+# ── Module complémentaire (modèle) ────────────────────────────
+# CE FICHIER N'EST PAS UNE UNITÉ : c'est le modèle à partir duquel
+# « ./manage.sh plugin install » génère
+# /etc/containers/systemd/docsearch-plugin-<nom>.container, en
+# substituant les @MARQUEURS@ à partir du manifeste du module.
+#
+# Pourquoi une génération et non une unité template systemd
+# (docsearch-plugin@.container) : le support des templates par Quadlet
+# dépend de la version de podman, et la production vise 4.9. Même
+# arbitrage que docsearch-worker.container.in.
+#
+# ⚠️  PAS d'EnvironmentFile=/etc/docsearch/docsearch.env, contrairement à
+# toutes les autres unités de la pile, et c'est délibéré : ce fichier
+# porte le mot de passe de liaison LDAP, les DSN des bases SQL et la clé
+# de chiffrement des DSN. Un module complémentaire est du code TIERS —
+# il reçoit ici le strict nécessaire pour parler à Kafka, et ses propres
+# secrets par « podman secret », jamais ceux du produit.
+#
+# ⚠️  Limite connue, à lire avant d'installer un module dont on ne
+# maîtrise pas le code : ce conteneur est sur docsearch-net, où
+# Elasticsearch et Redis répondent SANS authentification. Rien n'empêche
+# donc techniquement un module d'y écrire directement, alors que tout le
+# contrat repose sur le fait qu'il ne le fasse pas. La correction — un
+# réseau dédié aux modules, avec Kafka seul rattaché aux deux — est
+# décrite dans PLAN-PLUGINS.md ; elle touche à l'unité Kafka et demande
+# sa propre fenêtre d'exploitation.
+
+[Unit]
+Description=DocSearch — module complémentaire @NOM@
+PartOf=docsearch.target
+After=docsearch-kafka-ready.service
+Requires=docsearch-kafka-ready.service
+
+[Container]
+ContainerName=docsearch-plugin-@NOM@
+# Étiquette explicite, jamais « latest » : le manifeste l'exige, et la
+# production reçoit ses images par transfert manuel.
+Image=@IMAGE@
+Network=docsearch-net.network
+# Ce que le module a besoin de savoir, et rien de plus. Les valeurs sont
+# substituées à l'installation : Quadlet ne résout aucune variable
+# (c'est le principal piège de l'orchestration par unités, voir le
+# README de docsearch-infra).
+Environment=KAFKA_BOOTSTRAP=@KAFKA_BOOTSTRAP@
+Environment=DOCSEARCH_TOPIC=@TOPIC@
+Environment=DOCSEARCH_PLUGIN=@NOM@
+# Bornes de ressources, issues du manifeste. Ce n'est pas une
+# optimisation : un module tiers qui part en boucle ne doit pas emporter
+# la machine d'ingestion.
+PodmanArgs=--cpus=@CPUS@ --memory=@MEMOIRE@
+@SECRETS@
+
+[Service]
+Restart=always
+# Plus long que les unités du cœur : un module tiers qui échoue au
+# démarrage ne doit pas saturer le journal en boucle serrée.
+RestartSec=30
+
+[Install]
+WantedBy=docsearch.target

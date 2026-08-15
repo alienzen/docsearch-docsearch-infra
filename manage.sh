@@ -224,6 +224,91 @@ sync_contract() {
     fi
 }
 
+# ── Modules complémentaires (plugins) ────────────────────────
+# Un module se livre en archive tar contenant deux fichiers :
+#
+#   manifeste.json   déclaration validée par le contrat partagé
+#   image.tar        sortie de « podman save » de son image
+#
+# Le manifeste est un fichier SÉPARÉ et non une étiquette OCI de l'image,
+# pour qu'il soit validé AVANT de charger quoi que ce soit : un manifeste
+# refusé ne laisse rien derrière lui.
+#
+# Ce qui est machine-locale (l'image, l'unité systemd, le manifeste
+# installé) vit sous /etc ; ce qui est commun à la grappe (les sources
+# déclarées) va dans Redis, comme les autres registres. La distinction
+# compte : réinstaller un module sur une seconde machine d'ingestion ne
+# doit pas redéclarer ses sources.
+PLUGINS_DIR="$CONFIG_DIR/plugins"
+QUADLET_DIR="${DOCSEARCH_QUADLET_DIR:-/etc/containers/systemd}"
+CONTRACT_DIR="$(cd "$(dirname "$0")" && pwd)/contract"
+
+# Valide un manifeste avec le contrat partagé, SANS conteneur ni pile
+# démarrée : la source de vérité du contrat est dans ce dépôt, à côté.
+# Rend le manifeste normalisé sur la sortie standard.
+valider_manifeste_json() {
+    local fichier="$1"
+    command -v python3 >/dev/null 2>&1 || err "python3 est requis pour valider un manifeste."
+    MANIFESTE_FICHIER="$fichier" PYTHONPATH="$CONTRACT_DIR" python3 -c "
+import json, os, sys
+from docsearch_contract import valider_manifeste
+try:
+    with open(os.environ['MANIFESTE_FICHIER'], encoding='utf-8') as f:
+        brut = json.load(f)
+except json.JSONDecodeError as e:
+    print(f'manifeste.json illisible : {e}', file=sys.stderr)
+    sys.exit(1)
+try:
+    print(json.dumps(valider_manifeste(brut), ensure_ascii=False))
+except ValueError as e:
+    print(str(e), file=sys.stderr)
+    sys.exit(1)
+"
+}
+
+# Lit une clé du manifeste normalisé (JSON sur une ligne).
+manifeste_lire() {
+    MANIFESTE_JSON="$1" MANIFESTE_CLE="$2" python3 -c "
+import json, os
+m = json.loads(os.environ['MANIFESTE_JSON'])
+v = m[os.environ['MANIFESTE_CLE']]
+print(' '.join(v) if isinstance(v, list) else v)
+"
+}
+
+# Noms des sources déclarées par un module installé, en JSON.
+sources_du_manifeste() {
+    MANIFESTE_FICHIER="$PLUGINS_DIR/$1.json" python3 -c "
+import json, os
+m = json.load(open(os.environ['MANIFESTE_FICHIER'], encoding='utf-8'))
+print(json.dumps([s['nom'] for s in m['sources']]))
+"
+}
+
+# Écrit l'unité Quadlet du module depuis quadlet/plugin.container.in.
+# awk et non sed : la liste des secrets produit un nombre variable de
+# lignes, ce qu'une substitution sed ne sait pas faire lisiblement.
+ecrire_unite_plugin() {
+    local nom="$1" image="$2" cpus="$3" memoire="$4" secrets="$5"
+    local modele="$(dirname "$0")/quadlet/plugin.container.in"
+    [ -f "$modele" ] || err "Modèle d'unité introuvable : $modele"
+    awk -v nom="$nom" -v image="$image" -v cpus="$cpus" -v memoire="$memoire" \
+        -v secrets="$secrets" -v bootstrap="${KAFKA_BOOTSTRAP:-kafka:9092}" \
+        -v topic="${PLUGIN_TOPIC:-documents-ready}" '
+        /@SECRETS@/ {
+            n = split(secrets, liste, " ")
+            for (i = 1; i <= n; i++) if (liste[i] != "") print "Secret=" liste[i]
+            next
+        }
+        {
+            gsub(/@NOM@/, nom); gsub(/@IMAGE@/, image)
+            gsub(/@CPUS@/, cpus); gsub(/@MEMOIRE@/, memoire)
+            gsub(/@KAFKA_BOOTSTRAP@/, bootstrap); gsub(/@TOPIC@/, topic)
+            print
+        }
+    ' "$modele" > "$QUADLET_DIR/docsearch-plugin-$nom.container"
+}
+
 case "${1:-help}" in
 
   start)
@@ -1122,6 +1207,219 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
     fi
     ;;
 
+  plugin)
+    SOUS="${2:-}"
+    case "$SOUS" in
+
+      install)
+        require_root
+        ARCHIVE="${3:-}"
+        [ -n "$ARCHIVE" ] && [ -f "$ARCHIVE" ] \
+          || err "Usage : sudo ./manage.sh plugin install <archive.tar>
+
+  L'archive contient deux fichiers, à sa racine :
+    manifeste.json   déclaration du module (voir contract/docsearch_contract/manifeste.py)
+    image.tar        sortie de « podman save » de son image
+
+  Le manifeste est validé AVANT tout chargement : un module refusé ne
+  laisse ni image, ni unité, ni source enregistrée."
+
+        TMP_PLUGIN="$(mktemp -d)"
+        # shellcheck disable=SC2064  # expansion voulue à la définition
+        trap "rm -rf '$TMP_PLUGIN'" EXIT
+        tar -xf "$ARCHIVE" -C "$TMP_PLUGIN" || err "Archive illisible : $ARCHIVE"
+        [ -f "$TMP_PLUGIN/manifeste.json" ] || err "manifeste.json absent de l'archive."
+        [ -f "$TMP_PLUGIN/image.tar" ]      || err "image.tar absent de l'archive."
+
+        MANIFESTE="$(valider_manifeste_json "$TMP_PLUGIN/manifeste.json")" \
+          || err "Manifeste refusé — rien n'a été installé."
+        PLG_NOM="$(manifeste_lire "$MANIFESTE" nom)"
+        PLG_VERSION="$(manifeste_lire "$MANIFESTE" version)"
+        PLG_IMAGE="$(manifeste_lire "$MANIFESTE" image)"
+        PLG_SECRETS="$(manifeste_lire "$MANIFESTE" secrets)"
+        PLG_CPUS="$(MANIFESTE_JSON="$MANIFESTE" python3 -c "import json,os; print(json.loads(os.environ['MANIFESTE_JSON'])['ressources']['cpus'])")"
+        PLG_MEM="$(MANIFESTE_JSON="$MANIFESTE" python3 -c "import json,os; print(json.loads(os.environ['MANIFESTE_JSON'])['ressources']['memoire'])")"
+
+        # Secrets déclarés mais absents : l'unité démarrerait puis
+        # échouerait, avec un message de podman qui ne dit pas quoi créer.
+        for secret in $PLG_SECRETS; do
+            $PODMAN secret exists "$secret" 2>/dev/null \
+              || err "Secret podman '$secret' absent, exigé par le module « $PLG_NOM ».
+  Le créer d'abord :  printf '%s' '<valeur>' | sudo podman secret create $secret -"
+        done
+
+        # Noms de sources libres ? Vérifié AVANT le chargement de
+        # l'image, et l'enregistrement ne se fait qu'après.
+        export MANIFESTE_JSON="$MANIFESTE"
+        init_run -e MANIFESTE_JSON python3 -c "
+import os, json, sys
+import file_sources_config, sql_sources_config, web_sources_config
+from plugin_sources_config import get_sources
+
+m = json.loads(os.environ['MANIFESTE_JSON'])
+natives = {}
+for registre in (file_sources_config, sql_sources_config, web_sources_config):
+    natives.update(registre.get_sources())
+plugins = get_sources()
+
+conflits = []
+for source in m['sources']:
+    nom = source['nom']
+    if nom in natives:
+        conflits.append(f\"'{nom}' est déjà une source native\")
+    elif nom in plugins and plugins[nom].plugin != m['nom']:
+        conflits.append(f\"'{nom}' appartient déjà au module '{plugins[nom].plugin}'\")
+if conflits:
+    print('Noms de source déjà pris : ' + ' ; '.join(conflits), file=sys.stderr)
+    sys.exit(1)
+" || err "Installation refusée — rien n'a été chargé."
+
+        log "Chargement de l'image du module « $PLG_NOM » $PLG_VERSION..."
+        $PODMAN load -i "$TMP_PLUGIN/image.tar" >/dev/null \
+          || err "Chargement de l'image impossible."
+        $PODMAN image exists "$PLG_IMAGE" \
+          || err "L'archive ne contient pas l'image annoncée par le manifeste ($PLG_IMAGE)."
+
+        # Enregistrement des sources. Une source déjà connue de CE module
+        # conserve searchable/collectable/allowed_groups : une mise à jour
+        # ne doit pas rallumer une source qu'un administrateur avait
+        # éteinte (add_source remplace l'entrée en entier, voir son
+        # avertissement).
+        init_run -e MANIFESTE_JSON python3 -c "
+import os, json
+from plugin_sources_config import add_source, get_sources
+
+m = json.loads(os.environ['MANIFESTE_JSON'])
+existantes = get_sources()
+for source in m['sources']:
+    nom = source['nom']
+    ancienne = existantes.get(nom)
+    add_source(
+        name=nom, plugin=source['plugin'], es_index=source['es_index'],
+        acl_policy=source['acl_policy'], acl_groups=source['acl_groups'],
+        acl_principaux=source['acl_principaux'], fields=source['fields'],
+        label=source['label'] or None, description=source['description'] or None,
+        searchable=(ancienne.searchable if ancienne else source['searchable']),
+        collectable=(ancienne.collectable if ancienne else source['collectable']),
+        allowed_groups=(list(ancienne.allowed_groups) if ancienne else source['allowed_groups']),
+    )
+    print(f\"source '{nom}' enregistrée (index {source['es_index']}, ACL {source['acl_policy']})\")
+" || err "Enregistrement des sources impossible — l'image est chargée, l'unité n'est PAS écrite."
+
+        mkdir -p "$PLUGINS_DIR"
+        printf '%s\n' "$MANIFESTE" > "$PLUGINS_DIR/$PLG_NOM.json"
+        ecrire_unite_plugin "$PLG_NOM" "$PLG_IMAGE" "$PLG_CPUS" "$PLG_MEM" "$PLG_SECRETS"
+        systemctl daemon-reload
+
+        log "Module « $PLG_NOM » $PLG_VERSION installé."
+        log "Démarrer : sudo ./manage.sh plugin enable $PLG_NOM"
+        warn "Ce conteneur est sur docsearch-net, où Elasticsearch et Redis répondent sans
+  authentification : le contrat empêche un module d'écrire n'importe quoi, le réseau
+  ne l'en empêche pas encore. Voir PLAN-PLUGINS.md avant d'installer du code tiers."
+        ;;
+
+      list)
+        [ -d "$PLUGINS_DIR" ] || { log "Aucun module installé."; exit 0; }
+        for fichier in "$PLUGINS_DIR"/*.json; do
+            [ -e "$fichier" ] || { log "Aucun module installé."; exit 0; }
+            MANIFESTE_FICHIER="$fichier" python3 -c "
+import json, os, subprocess
+m = json.load(open(os.environ['MANIFESTE_FICHIER'], encoding='utf-8'))
+etat = subprocess.run(
+    ['systemctl', 'is-active', f\"docsearch-plugin-{m['nom']}\"],
+    capture_output=True, text=True,
+).stdout.strip() or 'inconnu'
+sources = ', '.join(s['nom'] for s in m['sources']) or '(aucune)'
+print(f\"{m['nom']:<16} {m['version']:<10} {etat:<10} {m['image']}\")
+print(f\"{'':<16} sources : {sources}\")
+"
+        done
+        ;;
+
+      enable|disable)
+        require_root
+        PLG_NOM="${3:-}"
+        [ -n "$PLG_NOM" ] || err "Usage : sudo ./manage.sh plugin $SOUS <nom>"
+        [ -f "$PLUGINS_DIR/$PLG_NOM.json" ] || err "Module inconnu : '$PLG_NOM' (voir ./manage.sh plugin list)"
+
+        if [ "$SOUS" = "enable" ]; then
+            PLG_ACTIF="true"
+            systemctl enable --now "docsearch-plugin-$PLG_NOM" 2>/dev/null \
+              || systemctl start "docsearch-plugin-$PLG_NOM"
+        else
+            PLG_ACTIF="false"
+            systemctl stop "docsearch-plugin-$PLG_NOM" 2>/dev/null || true
+        fi
+
+        # Les sources suivent l'état du module : un module arrêté qui
+        # laisserait ses sources cherchables afficherait un contenu que
+        # plus rien n'alimente ni ne met à jour. Rien n'est détruit — le
+        # réglage se rallume et tout revient.
+        SOURCES_JSON="$(sources_du_manifeste "$PLG_NOM")"
+        export SOURCES_JSON PLG_ACTIF
+        init_run -e SOURCES_JSON -e PLG_ACTIF python3 -c "
+import os, json
+from plugin_sources_config import set_searchable
+actif = os.environ['PLG_ACTIF'] == 'true'
+for nom in json.loads(os.environ['SOURCES_JSON']):
+    set_searchable(nom, actif)
+    print(f\"source '{nom}' : cherchable = {actif}\")
+"
+        if [ "$SOUS" = "enable" ]; then
+            log "Module « $PLG_NOM » activé."
+        else
+            log "Module « $PLG_NOM » arrêté — ses sources sortent de la recherche, rien n'est supprimé."
+        fi
+        ;;
+
+      remove)
+        require_root
+        PLG_NOM="${3:-}"
+        [ -n "$PLG_NOM" ] || err "Usage : sudo ./manage.sh plugin remove <nom>"
+        [ -f "$PLUGINS_DIR/$PLG_NOM.json" ] || err "Module inconnu : '$PLG_NOM' (voir ./manage.sh plugin list)"
+
+        warn "Le module « $PLG_NOM » va être retiré : unité systemd, manifeste installé et
+  sources désenregistrées. Les INDEX Elasticsearch et leurs documents ne sont PAS
+  supprimés — même choix que remove-*-source. L'image reste chargée."
+        read -rp "Confirmer ? (oui/non) : " CONFIRM
+        [ "$CONFIRM" = "oui" ] || { log "Annulé."; exit 0; }
+
+        systemctl disable --now "docsearch-plugin-$PLG_NOM" 2>/dev/null || true
+        rm -f "$QUADLET_DIR/docsearch-plugin-$PLG_NOM.container"
+        systemctl daemon-reload
+
+        SOURCES_JSON="$(sources_du_manifeste "$PLG_NOM")"
+        export SOURCES_JSON
+        init_run -e SOURCES_JSON python3 -c "
+import os, json
+from plugin_sources_config import remove_source
+for nom in json.loads(os.environ['SOURCES_JSON']):
+    try:
+        remove_source(nom)
+        print(f\"source '{nom}' retirée du registre\")
+    except KeyError:
+        print(f\"source '{nom}' déjà absente du registre\")
+"
+        rm -f "$PLUGINS_DIR/$PLG_NOM.json"
+        log "Module « $PLG_NOM » retiré."
+        warn "Index Elasticsearch conservés. Image toujours chargée : sudo podman rmi <image> pour la retirer."
+        ;;
+
+      *)
+        err "Usage : ./manage.sh plugin <install|list|enable|disable|remove> [...]
+
+    install <archive.tar>  Valider le manifeste, charger l'image, enregistrer les
+                           sources, écrire l'unité systemd (sudo)
+    list                   Modules installés, leur version et leur état
+    enable <nom>           Démarrer le module et rendre ses sources cherchables (sudo)
+    disable <nom>          L'arrêter et retirer ses sources de la recherche — ne
+                           détruit rien (sudo)
+    remove <nom>           Retirer l'unité, le manifeste et les sources (sudo) —
+                           ne supprime NI les index NI l'image"
+        ;;
+    esac
+    ;;
+
   sync-contract)
     # Sans sudo : ne touche qu'à des fichiers de dépôt, jamais aux
     # unités, aux images ni à /etc/docsearch.
@@ -1213,6 +1511,15 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
     echo "                                        existants (close/open + réécriture sur place)"
     echo "    backfill-hashes [source] [--apply]  Calculer l'empreinte de contenu des documents"
     echo "                                        déjà indexés (détection de doublons)"
+    echo "    plugin <sous-commande>   Modules complémentaires :"
+    echo "      install <archive.tar>  Valider le manifeste, charger l'image, enregistrer"
+    echo "                             les sources, écrire l'unité systemd (sudo)"
+    echo "      list                   Modules installés, version et état"
+    echo "      enable <nom>           Démarrer le module, rendre ses sources cherchables (sudo)"
+    echo "      disable <nom>          L'arrêter et le retirer de la recherche — sans rien"
+    echo "                             détruire (sudo)"
+    echo "      remove <nom>           Retirer unité, manifeste et sources (sudo) — ne"
+    echo "                             supprime NI les index NI l'image"
     echo "    sync-contract [--check]"
     echo "                    Recopier le contrat partagé (contract/) dans les dépôts"
     echo "                    consommateurs — --check se contente de signaler une dérive"

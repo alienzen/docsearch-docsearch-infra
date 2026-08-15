@@ -208,6 +208,52 @@ for role in "${ROLES[@]}"; do
     valider_role "$role" || ECHECS=$((ECHECS + 1))
 done
 
+# ── Le modèle d'unité des modules complémentaires ─────────────
+# Il n'appartient à aucun rôle : « ./manage.sh plugin install » l'instancie
+# à la demande, à partir d'un manifeste. Sans ce contrôle, une faute de
+# frappe dans le modèle ne se verrait qu'au premier module installé — sur
+# la machine du client, pas ici.
+valider_modele_plugin() {
+    local modele="$HERE/plugin.container.in"
+    [ -f "$modele" ] || { err "Modèle de module complémentaire introuvable : $modele"; return 1; }
+
+    local tmp; tmp="$(mktemp -d)"
+    # shellcheck disable=SC2064  # expansion voulue à la définition
+    trap "rm -rf '$tmp'" RETURN
+    mkdir -p "$tmp/unites" "$tmp/sortie"
+    # Mêmes substitutions que ecrire_unite_plugin() dans manage.sh, avec
+    # deux secrets pour éprouver la répétition de ligne.
+    sed -e 's/@NOM@/exemple/g' \
+        -e 's|@IMAGE@|registre.interne/docsearch-plugins/exemple:1.0.0|g' \
+        -e 's/@CPUS@/1.0/g' -e 's/@MEMOIRE@/512m/g' \
+        -e 's/@KAFKA_BOOTSTRAP@/kafka:9092/g' -e 's/@TOPIC@/documents-ready/g' \
+        -e 's/@SECRETS@/Secret=exemple-jeton\nSecret=exemple-second/' \
+        "$modele" > "$tmp/unites/docsearch-plugin-exemple.container"
+
+    # Le modèle référence docsearch-net.network, qui vit dans common/ :
+    # sans lui, le générateur signale une référence croisée manquante.
+    cp "$HERE/common/docsearch-net.network" "$tmp/unites/"
+
+    if ! QUADLET_UNIT_DIRS="$tmp/unites" "$QUADLET_BIN" -dryrun -no-kmsg-log \
+            >"$tmp/erreurs" 2>&1; then
+        err "modèle de module complémentaire : le générateur Quadlet le refuse."
+        sed 's/^/    /' "$tmp/erreurs" >&2
+        return 1
+    fi
+    # Hors commentaires : l'en-tête du modèle parle légitimement des
+    # marqueurs, ce sont les lignes de CONFIGURATION qui ne doivent plus
+    # en porter.
+    if grep -v '^[[:space:]]*#' "$tmp/unites/docsearch-plugin-exemple.container" \
+         | grep -q '@[A-Z_]*@'; then
+        err "modèle de module complémentaire : marqueur @…@ non substitué — ajouter sa
+    substitution dans ecrire_unite_plugin() (manage.sh) ET ici."
+        return 1
+    fi
+    log "modèle de module complémentaire : OK"
+}
+
+valider_modele_plugin || ECHECS=$((ECHECS + 1))
+
 echo
 if [ "$ECHECS" -gt 0 ]; then
     err "$ECHECS validation(s) en échec."

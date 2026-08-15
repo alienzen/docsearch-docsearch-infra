@@ -333,8 +333,7 @@ ni via `/document/{id}`.
 
 ## §2. Fonctionnalités — service dorsal sous `/ext/`
 
-> **Plomberie faite le 2026-08-15 (lot 3) ; le module de démonstration
-> reste à écrire.**
+> **Fait le 2026-08-15 (lot 3), module compris.**
 >
 > Livré : capacité `service_web` et clé `port` du manifeste (contrat
 > 0.4.0), `jetons.py` — ce qu'un module doit vérifier d'une session —,
@@ -351,11 +350,21 @@ ni via `/document/{id}`.
 > fragment statique ne dépend de rien et se relit en clair pour
 > diagnostiquer.
 >
-> **Ce qui manque, et ce document le réclame explicitement** (« le lot 3
-> doit livrer un vrai plugin, pas un squelette ») : l'assistant du §2.2
-> lui-même, et le branchement de `ChatPage.vue` dessus. Tant qu'aucun
-> module n'a emprunté ce chemin de bout en bout, le contrat de jeton et le
-> retrait du préfixe `/ext/<nom>/` sont écrits, pas éprouvés.
+> **Le module existe** (`docsearch-plugin-assistant`, 7ᵉ dépôt) : il
+> vérifie la session contre le JWKS, rappelle `/search` en portant le
+> cookie de l'utilisateur, et rend des passages cités. 15 tests. Le
+> chemin est donc emprunté de bout en bout — c'est ce que ce document
+> réclamait (« le lot 3 doit livrer un vrai plugin, pas un squelette »).
+> `ChatPage.vue` l'interroge et ne sert plus de réponses en dur ;
+> `cannedResponses.ts` a disparu.
+>
+> **Écart assumé** : le module ne RÉDIGE pas. Il n'y a aucun modèle de
+> langage derrière — la réponse est extractive, assemblée à partir des
+> passages déjà surlignés par la recherche. Le §5 de PLAN-EVOLUTIONS.md
+> attend toujours son arbitrage matériel, et une réponse extractive a une
+> propriété que la génération n'a pas : elle ne peut pas inventer. Le jour
+> où l'inférence arrive, c'est `app/reponse.py` qui change — pas le
+> contrat, pas le routage, pas l'interface.
 >
 > ⚠️ `include` a été ajouté dans `docsearch-ui-vue/nginx.conf`, qui est
 > **copié dans l'image** : le routage `/ext/` n'existe qu'après un

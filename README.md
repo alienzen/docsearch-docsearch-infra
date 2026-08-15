@@ -19,6 +19,7 @@ DocSearch est découpé en 6 dépôts indépendants :
 | [docsearch-ui-vue](../docsearch-ui-vue) | Interface web (Vue 3 + DSFR) | Évolue avec l'UX |
 | **docsearch-infra** (ce dépôt) | Orchestration, déploiement | Évolue rarement |
 | [docsearch-docs](../docsearch-docs) | Documents commerciaux | Géré par les équipes commerciales |
+| [docsearch-plugin-assistant](../docsearch-plugin-assistant) | Assistant de recherche — premier **module complémentaire** | Indépendant : s'installe et se retire sans toucher au cœur (voir [HOWTO-creer-module-complementaire.md](HOWTO-creer-module-complementaire.md)) |
 | `docsearch-dataset-generator` | Génération de jeux de test | Cloné à la demande, hors de la disposition ci-dessous |
 
 **Interface historique** — `docsearch-ui` (HTML/JS sans build) a été

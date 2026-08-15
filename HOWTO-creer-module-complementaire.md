@@ -216,3 +216,36 @@ d'écrire n'importe quoi *par le chemin prévu* ; le réseau ne l'empêche pas
 d'en emprunter un autre. Tant que le réseau dédié décrit dans
 [PLAN-PLUGINS.md](PLAN-PLUGINS.md) n'est pas en place, **n'installez que
 des modules dont vous maîtrisez le code**.
+
+## 2 ter. Ajouter une entrée de menu (`interface`)
+
+Un module peut poser une entrée dans le menu de l'interface de recherche :
+
+```json
+{
+  "capacites": ["service_web"],
+  "port": 8080,
+  "interface": {
+    "nav": [{"libelle": "Assistant", "chemin": "/ext/assistant/", "icone": "fr-icon-chat-3-line"}]
+  }
+}
+```
+
+Le cœur ne rend **jamais** de code venu d'un module : seulement un
+libellé (en texte), un chemin et une classe d'icône DSFR. Trois contrôles
+à l'installation :
+
+- le chemin doit être sous `/ext/<votre module>/` — un module ne pose pas
+  dans le menu de tout le monde un lien vers ailleurs ;
+- l'icône doit être une classe `fr-icon-…` connue (le cœur la rend comme
+  classe CSS) ;
+- le libellé est borné à 40 caractères : une entrée vit dans un en-tête
+  partagé, et un libellé démesuré ne tronque pas, il casse la mise en page
+  de tous.
+
+L'entrée n'apparaît que si le module est actif (`plugin enable`) et
+disparaît avec `plugin disable` — sans quoi elle mènerait à un 502.
+
+⚠️ Trois autres accroches sont prévues (`result_action`, `admin_panel`,
+`page`) et **ne sont pas encore servies** : les déclarer fait refuser le
+manifeste.

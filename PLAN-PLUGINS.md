@@ -431,6 +431,36 @@ en bout).
 
 ## §3. Interface — points d'accroche déclaratifs
 
+> **Une accroche sur quatre, faite de bout en bout le 2026-08-15.**
+>
+> Livré : `interface.py` dans le contrat (version 0.5.0), l'accroche
+> `nav` — une entrée de menu —, son enregistrement dans Redis par
+> `plugin install`, son suivi par `plugin enable/disable/remove`, sa
+> publication dans `/ui-config`, et son rendu par la page de recherche.
+> L'assistant déclare la sienne. 15 tests de contrat, 4 d'interface.
+>
+> **`result_action`, `admin_panel` et `page` ne sont PAS servies** — les
+> déclarer fait refuser le manifeste, plutôt qu'installer un module qui
+> promet un écran que rien n'affiche. Elles suivront le chemin que `nav`
+> a défriché : validation dans `interface.py`, écriture Redis à
+> l'installation, publication par `/ui-config`, rendu par le composant
+> concerné. C'est un choix de découpage, pas une difficulté technique —
+> la tranche verticale complète valait mieux que quatre moitiés.
+>
+> Trois contrôles portent tout le reste : une entrée ne peut viser que
+> `/ext/<son propre module>/` (sans quoi un module poserait dans le menu
+> de tout le monde un lien vers n'importe où), l'icône doit être une
+> classe DSFR connue (le cœur la rend comme classe CSS), et le libellé
+> est borné (une entrée vit dans un en-tête partagé).
+>
+> **Écart avec ce qui suit** : pas de bascule `ui_config` par module. Elle
+> aurait fait doublon avec `plugin enable/disable`, qui éteint déjà le
+> conteneur, les sources ET l'entrée de menu d'un seul geste — deux
+> interrupteurs pour une lampe, dont l'un laisse le module tourner. La
+> réserve d'espace de noms `plugin.<nom>.enabled` décrite plus bas reste
+> donc à faire le jour où une bascule d'interface devra être indépendante
+> de l'état du module.
+
 Le plugin ne livre **pas** de JavaScript dans le bundle de l'interface. Son
 manifeste déclare des points d'accroche dans un vocabulaire fixe, que le cœur
 rend avec ses propres composants DSFR :

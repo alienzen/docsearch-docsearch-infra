@@ -1353,6 +1353,19 @@ for source in m['sources']:
     print(f\"source '{nom}' enregistrée (index {source['es_index']}, ACL {source['acl_policy']})\")
 " || err "Enregistrement des sources impossible — l'image est chargée, l'unité n'est PAS écrite."
 
+        # Accroches d'interface (lot 4) : écrites dans Redis, pas sur
+        # disque — l'API tourne sur le frontal et ne voit pas
+        # /etc/docsearch/plugins de la machine d'ingestion. Ce qui doit
+        # atteindre le navigateur passe par Redis, comme les sources.
+        init_run -e MANIFESTE_JSON python3 -c "
+import os, json
+from plugin_ui_config import enregistrer
+m = json.loads(os.environ['MANIFESTE_JSON'])
+nav = m['interface']['nav']
+enregistrer(m['nom'], nav)
+print(f\"{len(nav)} entrée(s) de menu enregistrée(s)\")
+" || warn "Accroches d'interface non enregistrées — le module fonctionnera, sans entrée de menu."
+
         mkdir -p "$PLUGINS_DIR"
         printf '%s\n' "$MANIFESTE" > "$PLUGINS_DIR/$PLG_NOM.json"
         ecrire_unite_plugin "$PLG_NOM" "$PLG_IMAGE" "$PLG_CPUS" "$PLG_MEM" "$PLG_SECRETS"
@@ -1411,13 +1424,19 @@ print(f\"{'':<16} sources : {sources}\")
         # réglage se rallume et tout revient.
         SOURCES_JSON="$(sources_du_manifeste "$PLG_NOM")"
         export SOURCES_JSON PLG_ACTIF
-        init_run -e SOURCES_JSON -e PLG_ACTIF python3 -c "
+        export PLG_NOM
+        init_run -e SOURCES_JSON -e PLG_ACTIF -e PLG_NOM python3 -c "
 import os, json
 from plugin_sources_config import set_searchable
+from plugin_ui_config import set_actif
 actif = os.environ['PLG_ACTIF'] == 'true'
 for nom in json.loads(os.environ['SOURCES_JSON']):
     set_searchable(nom, actif)
     print(f\"source '{nom}' : cherchable = {actif}\")
+# Un module arrêté ne laisse pas son entrée dans le menu de tout le
+# monde, où elle mènerait à un 502.
+set_actif(os.environ['PLG_NOM'], actif)
+print(f\"entrées de menu : {'affichées' if actif else 'masquées'}\")
 "
         if [ "$SOUS" = "enable" ]; then
             log "Module « $PLG_NOM » activé."
@@ -1461,6 +1480,14 @@ for nom in json.loads(os.environ['SOURCES_JSON']):
     except KeyError:
         print(f\"source '{nom}' déjà absente du registre\")
 "
+        export PLG_NOM
+        init_run -e PLG_NOM python3 -c "
+import os
+from plugin_ui_config import retirer
+retirer(os.environ['PLG_NOM'])
+print('entrées de menu retirées')
+" || warn "Accroches d'interface non retirées de Redis."
+
         rm -f "$PLUGINS_DIR/$PLG_NOM.json"
         log "Module « $PLG_NOM » retiré."
         warn "Index Elasticsearch conservés. Image toujours chargée : sudo podman rmi <image> pour la retirer."

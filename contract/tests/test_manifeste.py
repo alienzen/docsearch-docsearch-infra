@@ -185,3 +185,16 @@ def test_les_deux_capacites_ensemble():
     m = manifeste.valider_manifeste(base(capacites=["ingestion", "service_web"], port=8080))
     assert m["capacites"] == ["ingestion", "service_web"]
     assert m["sources"][0]["plugin"] == "jira"
+
+
+def test_entree_de_menu_exige_le_service_web():
+    """Une entrée de menu mène sous /ext/<nom>/ : sans la capacité qui
+    route ce préfixe, le lien du menu rendrait 404."""
+    with pytest.raises(ContratInvalide, match="service_web"):
+        manifeste.valider_manifeste(base(
+            interface={"nav": [{"libelle": "X", "chemin": "/ext/jira/x"}]},
+        ))
+
+
+def test_manifeste_sans_interface_rend_une_interface_vide():
+    assert manifeste.valider_manifeste(base())["interface"] == {"nav": []}

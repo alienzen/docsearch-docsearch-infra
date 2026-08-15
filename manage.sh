@@ -176,7 +176,7 @@ CONTRACT_SRC="$(cd "$(dirname "$0")" && pwd)/contract/docsearch_contract"
 # `app/` et non `vendor/` : les modules Python de ces dépôts sont à plat
 # dans l'image (COPY app/ .), un paquet déposé là est importable sans
 # toucher ni au Dockerfile ni au sys.path des tests.
-CONTRACT_CIBLES="docsearch-api/app/docsearch_contract"
+CONTRACT_CIBLES="docsearch-api/app/docsearch_contract docsearch-ingestion/app/docsearch_contract"
 
 # Empreinte du contenu du contrat — sert à comparer source et copies.
 # `find | sort` pour un ordre stable, le nom de fichier compte dans
@@ -366,7 +366,7 @@ case "${1:-help}" in
     # Seulement pour les cibles concernées : `build ui` n'a pas à échouer
     # parce que la copie de docsearch-api a dérivé.
     case "$WHAT" in
-      api|all) sync_contract check ;;
+      api|ingestion|all) sync_contract check ;;
     esac
     # ⚠️ podman sépare le magasin d'images de root de celui de chaque
     # utilisateur : une image construite SANS sudo est invisible pour les
@@ -751,6 +751,122 @@ print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
     init_run python3 web_indexer.py "$NAME"
     ;;
 
+  add-plugin-source)
+    NAME="${2:-}"
+    PLUGIN_ARG="${3:-}"
+    ES_INDEX_ARG="${4:-}"
+    ACL_POLICY_ARG="${5:-}"
+    if [ -z "$NAME" ] || [ -z "$PLUGIN_ARG" ] || [ -z "$ES_INDEX_ARG" ] || [ -z "$ACL_POLICY_ARG" ]; then
+        err "Usage : sudo ./manage.sh add-plugin-source <nom> <module> <index_es> <public|groupes|fournie> [options]
+
+  <module>    nom du module complémentaire AUTORISÉ à pousser sur cette source.
+              C'est le seul contrôle qui empêche un module d'écrire dans la
+              source d'un autre : un message émis par un autre module est refusé.
+  <politique> comment l'ACL des documents est décidée — par l'ADMINISTRATEUR,
+              jamais par le module :
+                public   tous les documents sont publics
+                groupes  ACL fixe, exige --groupes
+                fournie  le module fournit users/groups par document, filtrés
+                         contre --principaux (obligatoire, une liste vide est
+                         REFUSÉE — elle se lirait comme « aucune restriction »)
+              'acl.public' proposé par un module est ignoré dans les trois cas.
+
+  Options :
+    --groupes g1,g2       groupes de la politique 'groupes'
+    --principaux p1,p2    liste blanche de la politique 'fournie' (users ET groups)
+    --fields JSON         champs supplémentaires, ex :
+                          '[{\"nom\":\"bureau\",\"es_type\":\"keyword\",\"facet\":true}]'
+    --label <libellé>     libellé affiché dans la recherche
+    --description <texte>
+
+  Exemple :
+    ./manage.sh add-plugin-source tickets jira tickets_jira groupes --groupes DL-SUPPORT --label Tickets"
+    fi
+    shift 5
+    GROUPES_ARG=""; PRINCIPAUX_ARG=""; FIELDS_ARG="[]"; LABEL_ARG=""; DESC_ARG=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --groupes)     GROUPES_ARG="$2"; shift 2 ;;
+            --principaux)  PRINCIPAUX_ARG="$2"; shift 2 ;;
+            --fields)      FIELDS_ARG="$2"; shift 2 ;;
+            --label)       LABEL_ARG="$2"; shift 2 ;;
+            --description) DESC_ARG="$2"; shift 2 ;;
+            *) err "Option inconnue : $1" ;;
+        esac
+    done
+
+    export PLG_NAME="$NAME" PLG_PLUGIN="$PLUGIN_ARG" PLG_ES_INDEX="$ES_INDEX_ARG" \
+           PLG_ACL_POLICY="$ACL_POLICY_ARG" PLG_GROUPES="$GROUPES_ARG" \
+           PLG_PRINCIPAUX="$PRINCIPAUX_ARG" PLG_FIELDS="$FIELDS_ARG" \
+           PLG_LABEL="$LABEL_ARG" PLG_DESC="$DESC_ARG"
+
+    init_run \
+      -e PLG_NAME -e PLG_PLUGIN -e PLG_ES_INDEX -e PLG_ACL_POLICY -e PLG_GROUPES \
+      -e PLG_PRINCIPAUX -e PLG_FIELDS -e PLG_LABEL -e PLG_DESC \
+      python3 -c "
+import os, json, sys
+from plugin_sources_config import add_source
+
+def liste(valeur):
+    return [x.strip() for x in valeur.split(',') if x.strip()]
+
+try:
+    cfg = add_source(
+        name=os.environ['PLG_NAME'],
+        plugin=os.environ['PLG_PLUGIN'],
+        es_index=os.environ['PLG_ES_INDEX'],
+        acl_policy=os.environ['PLG_ACL_POLICY'],
+        acl_groups=liste(os.environ['PLG_GROUPES']),
+        acl_principaux=liste(os.environ['PLG_PRINCIPAUX']),
+        fields=json.loads(os.environ['PLG_FIELDS'] or '[]'),
+        label=os.environ['PLG_LABEL'] or None,
+        description=os.environ['PLG_DESC'] or None,
+    )
+except ValueError as e:
+    # ContratInvalide hérite de ValueError : le message dit quoi corriger.
+    print(f'❌ {e}', file=sys.stderr)
+    sys.exit(1)
+print(json.dumps(cfg[os.environ['PLG_NAME']], indent=2, ensure_ascii=False))
+"
+    log "Source plugin '$NAME' enregistrée (module « $PLUGIN_ARG », politique « $ACL_POLICY_ARG »)."
+    log "Le worker indexera ce que « $PLUGIN_ARG » poussera sur le topic documents-ready, sans redémarrage."
+    ;;
+
+  list-plugin-sources)
+    init_run python3 -c "
+from plugin_sources_config import get_sources
+import json
+print(json.dumps({n: {
+    'plugin':         s.plugin,
+    'es_index':       s.es_index,
+    'acl_policy':     s.acl_policy,
+    'acl_groups':     list(s.acl_groups),
+    'acl_principaux': list(s.acl_principaux),
+    'fields':         [c.nom for c in s.fields],
+    'label':          s.label,
+    'searchable':     s.searchable,
+} for n, s in get_sources().items()}, indent=2, ensure_ascii=False))
+"
+    ;;
+
+  remove-plugin-source)
+    NAME="${2:-}"
+    if [ -z "$NAME" ]; then
+        err "Usage : sudo ./manage.sh remove-plugin-source <nom>
+  Retire la source du registre — le worker cesse d'accepter ce que le module
+  pousse dessus. NE supprime PAS l'index Elasticsearch ni les documents déjà
+  indexés (mais ils sortent de la recherche : plus aucune source ne les
+  déclare)."
+    fi
+    init_run python3 -c "
+from plugin_sources_config import remove_source
+import json
+print(json.dumps(remove_source('$NAME'), indent=2, ensure_ascii=False))
+"
+    log "Source plugin '$NAME' retirée du registre."
+    warn "L'index Elasticsearch associé n'a PAS été supprimé."
+    ;;
+
   set-config)
     KEY="${2:-}"
     VALUE="${3:-}"
@@ -1065,6 +1181,12 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
     echo "    list-web-sources        Lister les sources web enregistrées"
     echo "    remove-web-source <nom> Retirer une source web du registre (ne supprime PAS ses index)"
     echo "    run-web-source <nom>    Déclencher un passage manuel immédiat (sans attendre poll_interval)"
+    echo "    add-plugin-source <nom> <module> <index_es> <public|groupes|fournie> [--groupes ...]"
+    echo "                      [--principaux ...] [--fields JSON] [--label ...]"
+    echo "                    Enregistrer une source alimentée par un module complémentaire"
+    echo "                    (documents poussés sur le topic Kafka documents-ready)"
+    echo "    list-plugin-sources        Lister les sources de modules complémentaires"
+    echo "    remove-plugin-source <nom> Retirer une source plugin (ne supprime PAS son index)"
     echo "    set-filetype <ext> [--enabled true|false] [--max-size Mo] [--source <nom>]"
     echo "                    Activer/désactiver un type de fichier ou fixer sa taille max,"
     echo "                    pour une source donnée (défaut 'documents' — chaque source a"

@@ -195,6 +195,35 @@ six fois.
 
 ## §1. Sources de données — connecteur hors processus
 
+> **Fait le 2026-08-15.**
+>
+> Livré : le topic `documents-ready` (auto-créé par Kafka, comme
+> `documents-to-index`), `plugin_worker.py` et `plugin_indexer.py` côté
+> `docsearch-ingestion`, le registre `plugin_sources_config.py` dans les
+> deux dépôts, `plugins.py` et `documents.py` dans le contrat (version
+> 0.2.0), le type `plugin` branché dans `source_registries.REGISTRES`,
+> `./manage.sh add|list|remove-plugin-source`, et l'unité
+> `docsearch-plugin-worker.container` (dev + rôle `ingest`, avec les
+> singletons).
+>
+> 26 tests de contrat (aucun service) et 23 dans `docsearch-ingestion`
+> contre un vrai Elasticsearch — dépôt qui n'avait **aucun test** avant
+> ce lot, et dont la CI ne faisait que `ruff` et `docker build`.
+>
+> **Écart avec le plan** : le registre est une QUATRIÈME clé Redis
+> (`docsearch:config:plugin_sources`), pas l'entrée typée d'une clé
+> unique — le chemin d'écriture générique du §0 n'est pas fait. Le
+> surcoût est nul là où ça comptait : le type `plugin` s'est branché
+> dans la vue générique en une ligne, ce qui était exactement la promesse
+> du lot 0. La consolidation des clés reste une hygiène à faire, pas un
+> préalable.
+>
+> **Reste hors périmètre, et le demeure tant qu'aucun module n'existe** :
+> les routes `/admin/plugin-sources` et leur panneau (les sources se
+> déclarent par `manage.sh`, comme les sources SQL et web l'ont d'abord
+> fait), et la passerelle HTTP → Kafka pour les auteurs de modules sans
+> client Kafka.
+
 **Le plugin ne parle jamais à Elasticsearch. Il publie des documents déjà
 extraits sur un topic Kafka, et un worker générique du cœur écrit.**
 

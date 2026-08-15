@@ -1,0 +1,40 @@
+# ── Worker des modules complémentaires ────────────────────────
+# Consomme le topic Kafka `documents-ready`, sur lequel les modules
+# complémentaires poussent des documents DÉJÀ EXTRAITS, et les indexe
+# après validation contre le contrat et le registre des sources plugin
+# (./manage.sh add-plugin-source).
+#
+# Aucun montage de /sources : ce worker ne lit aucun fichier, il reçoit.
+# Aucun accès Tika non plus — l'extraction est le travail du module, pas
+# du cœur.
+#
+# ⚠️  C'est le SEUL composant qui écrit dans Elasticsearch pour le compte
+# d'un module complémentaire. Les modules eux-mêmes n'ont ni l'URL du
+# cluster ni de compte : ils ne parlent qu'à Kafka. Voir
+# ../../PLAN-PLUGINS.md, invariant 1.
+#
+# Un seul exemplaire suffit ici (contrairement aux workers d'indexation
+# de fichiers, dupliqués par scale-workers) : le coût est celui d'un bulk
+# ES, pas d'une extraction Tika. Le jour où il faudrait paralléliser, le
+# groupe de consommateurs « plugin-workers » le permet déjà — il suffit
+# d'ajouter des unités, dans la limite du nombre de partitions du topic.
+
+[Unit]
+Description=DocSearch — worker des modules complémentaires
+PartOf=docsearch.target
+After=docsearch-kafka-ready.service
+Requires=docsearch-kafka-ready.service
+
+[Container]
+ContainerName=docsearch-plugin-worker
+Image=localhost/docsearch/ingestion:latest
+Network=docsearch-net.network
+Exec=python plugin_worker.py
+EnvironmentFile=/etc/docsearch/docsearch.env
+
+[Service]
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=docsearch.target

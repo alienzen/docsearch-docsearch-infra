@@ -17,6 +17,9 @@ qui n'a pas à charger l'API pour savoir ce qu'une source est.
 | Module | Rôle |
 |---|---|
 | `sources.py` | Vue générique des registres de sources : `SourceEntry`, `visible_to()`, `searchable_names()`, `collectable_names()`, `find()` |
+| `plugins.py` | Déclaration d'une source portée par un module complémentaire : `PluginSource`, politiques d'ACL, `valider_declaration()` |
+| `documents.py` | Enveloppe des messages poussés sur `documents-ready`, construction du document indexé, application de l'ACL |
+| `erreurs.py` | `ContratInvalide`, seule exception du contrat |
 | `version.py` | `CONTRACT_VERSION` — version sémantique du contrat |
 
 ## Pourquoi une copie plutôt qu'une dépendance installée
@@ -65,9 +68,11 @@ au Dockerfile ni au `sys.path` des tests.
 
 | Dépôt | Ce qu'il en utilise |
 |---|---|
-| `docsearch-api` | `sources.py` — `search_api.py` et `search_query.py`, via `app/source_registries.py` |
+| `docsearch-api` | `sources.py` — `search_api.py` et `search_query.py`, via `app/source_registries.py` ; `plugins.py` — `plugin_sources_config.py` |
+| `docsearch-ingestion` | `plugins.py` et `documents.py` — `plugin_sources_config.py`, `plugin_worker.py`, `plugin_indexer.py` |
 
-`docsearch-ingestion` n'en dépend pas encore : il n'aura besoin de la vue
-générique qu'au lot 1, avec le worker d'ingestion des modules
-complémentaires. Vendoriser dès maintenant un paquet qu'il n'importe pas
-n'ajouterait que du code mort.
+C'est le contrat qui rend `plugin_sources_config.py` supportable en deux
+exemplaires : les règles — validation, politiques d'ACL, valeurs par
+défaut — n'existent qu'ici, la copie ne porte plus que l'entrée/sortie
+Redis. À comparer aux six copies de `*_sources_config.py` natives, qui
+dupliquent aussi leurs règles.

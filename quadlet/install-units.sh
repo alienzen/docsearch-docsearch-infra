@@ -14,7 +14,8 @@
 #
 #  Options :
 #    --workers N        nombre d'unités worker (défaut : 4 en dev, 3 en ingest)
-#    --with-singletons  ajoute le watcher — ingest-1 UNIQUEMENT
+#    --with-singletons  ajoute le watcher et le worker des modules
+#                       complémentaires — ingest-1 UNIQUEMENT
 #    --no-enable        n'active PAS le démarrage au boot (et respecte un
 #                       "systemctl disable docsearch.target" déjà en place)
 #    --dry-run          montre ce qui serait fait, n'écrit rien
@@ -225,9 +226,14 @@ case "$ROLE" in
       prune_workers "${WORKERS:-3}"
       if [ "$SINGLETONS" = true ]; then
           run install -m 0644 "$HERE/roles/ingest/docsearch-watcher.container" "$QUADLET_DIR/"
-          log "watcher installé (machine ingest-1)."
+          # Même statut que le watcher : un seul exemplaire suffit dans la
+          # grappe. Le groupe de consommateurs « plugin-workers » permettra
+          # d'en ajouter le jour où le volume poussé le justifiera.
+          run install -m 0644 "$HERE/roles/ingest/docsearch-plugin-worker.container" "$QUADLET_DIR/"
+          log "watcher et worker de modules complémentaires installés (machine ingest-1)."
       else
           run rm -f "$QUADLET_DIR/docsearch-watcher.container"
+          run rm -f "$QUADLET_DIR/docsearch-plugin-worker.container"
       fi
       install_config "$HERE/roles/ingest/docsearch.env.example" "$CONFIG_DIR/docsearch.env"
       ;;

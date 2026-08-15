@@ -258,6 +258,19 @@ libellé (en texte), un chemin et une classe d'icône DSFR. Trois contrôles
 L'entrée n'apparaît que si le module est actif (`plugin enable`) et
 disparaît avec `plugin disable` — sans quoi elle mènerait à un 502.
 
+⚠️ **Le chemin doit être une route que votre module SERT.** Rappel du §2
+bis : le préfixe est retiré avant d'arriver au module, donc
+`/ext/assistant/` lui parvient comme `/`. Un module qui n'expose que
+`/ask` et déclare une entrée vers `/ext/assistant/` produit un lien de
+menu qui rend `{"detail":"Not Found"}` — l'erreur est côté module, pas
+côté proxy, et c'est le corps JSON qui le trahit. Rien ne peut le
+détecter à l'installation : le cœur ne connaît pas les routes de votre
+module. **Cliquez sur votre entrée après `plugin enable`.**
+
+Un module qui n'a pas d'écran à lui — parce que son interface est une
+page du cœur, comme l'assistant de recherche — ne déclare simplement pas
+d'entrée. Un service dorsal n'a rien à faire dans le menu.
+
 ⚠️ Trois autres accroches sont prévues (`result_action`, `admin_panel`,
 `page`) et **ne sont pas encore servies** : les déclarer fait refuser le
 manifeste.

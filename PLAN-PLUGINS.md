@@ -108,6 +108,37 @@ par plugin est exactement ce qu'il ne faut pas laisser arriver.
 
 Deux préalables, sans valeur d'usage propre, et incontournables.
 
+> **Entamé le 2026-08-15 — chemin de LECTURE livré, écriture et migration
+> restant à faire.**
+>
+> Livré : `contract/docsearch_contract/` (source de vérité) avec
+> `sources.py` — `SourceEntry`, `visible_to()`, `searchable_names()`,
+> `collectable_names()`, `find()` —, `./manage.sh sync-contract [--check]`
+> et son contrôle de dérive avant chaque `build`, la copie dans
+> `docsearch-api/app/docsearch_contract/`, et `app/source_registries.py`
+> qui lie les trois registres à cette vue. 10 tests dans `contract/`
+> (aucun service requis), 4 dans `docsearch-api`.
+>
+> Six énumérations des trois registres ont disparu de `docsearch-api` —
+> quatre dans `search_api.py`, deux dans `search_query.py`, dont la copie
+> de `_visible_to()` marquée « Identique à… ». `search_api` et
+> `search_query` répondent désormais *par construction* la même chose à
+> « quelles sources cet utilisateur peut-il atteindre », et un test le
+> verrouille.
+>
+> **Écart avec le plan, mesuré plutôt que supposé** : le paquet est
+> **vendorisé en source**, pas construit en roue. Le contexte de
+> `podman build` est le dépôt consommateur — il ne peut pas atteindre
+> `../docsearch-infra` — et il n'existe pas de registre de paquets interne
+> en production. Une roue aurait ajouté un artefact binaire à committer
+> pour le même résultat. Ce qui compte n'était pas la forme du paquet mais
+> que la copie soit *générée* et sa dérive *détectée* : c'est le cas.
+>
+> Reste à faire pour clore le lot : la clé Redis unique et le chemin
+> d'ÉCRITURE (les trois registres gardent leurs clés et leurs fonctions de
+> mutation), la migration ci-dessous, et la vendorisation vers
+> `docsearch-ingestion` — inutile tant que le lot 1 n'existe pas.
+
 ### 0.1 Un registre de sources générique
 
 Un seul module, une seule clé Redis, une entrée typée :

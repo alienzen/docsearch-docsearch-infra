@@ -154,6 +154,76 @@ set_sysctl() {
     fi
 }
 
+# ── Contrat partagé (contract/) ──────────────────────────────
+# La source de vérité vit ici, dans docsearch-infra ; les dépôts
+# consommateurs en portent une COPIE, versionnée avec eux. Pourquoi une
+# copie plutôt qu'une dépendance installée :
+#
+#   - le contexte de `podman build` est le dépôt consommateur, qui ne
+#     peut donc pas atteindre ../docsearch-infra au moment du build ;
+#   - la production n'a pas Internet : il n'y a pas de registre de
+#     paquets interne à interroger, et une roue vendorisée serait un
+#     artefact binaire de plus à committer ;
+#   - `podman build .` lancé à la main dans un dépôt consommateur doit
+#     continuer de produire une image qui fonctionne.
+#
+# La copie est donc assumée — mais elle est GÉNÉRÉE et VÉRIFIÉE, ce qui
+# est exactement ce qui manquait aux six copies de *_sources_config.py
+# tenues à la main. Toute construction d'image contrôle la dérive avant
+# de démarrer.
+CONTRACT_SRC="$(cd "$(dirname "$0")" && pwd)/contract/docsearch_contract"
+# Où chaque dépôt attend sa copie, relativement au dossier parent commun.
+# `app/` et non `vendor/` : les modules Python de ces dépôts sont à plat
+# dans l'image (COPY app/ .), un paquet déposé là est importable sans
+# toucher ni au Dockerfile ni au sys.path des tests.
+CONTRACT_CIBLES="docsearch-api/app/docsearch_contract"
+
+# Empreinte du contenu du contrat — sert à comparer source et copies.
+# `find | sort` pour un ordre stable, le nom de fichier compte dans
+# l'empreinte (un fichier renommé est une dérive).
+contract_hash() {
+    local dir="$1"
+    [ -d "$dir" ] || { echo "ABSENT"; return 0; }
+    (cd "$dir" && find . -name '*.py' -type f | sort | xargs sha256sum | sha256sum | cut -d' ' -f1)
+}
+
+sync_contract() {
+    local mode="${1:-apply}"   # apply | check
+    local repos_dir divergences=0
+    repos_dir="$(cd "$(dirname "$0")/.." && pwd)"
+    [ -d "$CONTRACT_SRC" ] || err "Contrat introuvable : $CONTRACT_SRC"
+
+    local src_hash; src_hash="$(contract_hash "$CONTRACT_SRC")"
+
+    for cible in $CONTRACT_CIBLES; do
+        local dest="$repos_dir/$cible"
+        local depot="${cible%%/*}"
+        if [ ! -d "$repos_dir/$depot" ]; then
+            warn "Dépôt absent, copie ignorée : $repos_dir/$depot"
+            continue
+        fi
+        if [ "$(contract_hash "$dest")" = "$src_hash" ]; then
+            [ "$mode" = "check" ] || log "Contrat déjà à jour : $cible"
+            continue
+        fi
+        if [ "$mode" = "check" ]; then
+            warn "Contrat DIVERGENT : $cible"
+            divergences=$((divergences + 1))
+            continue
+        fi
+        rm -rf "$dest"
+        mkdir -p "$dest"
+        cp "$CONTRACT_SRC"/*.py "$dest/"
+        log "Contrat copié vers $cible"
+    done
+
+    if [ "$divergences" -gt 0 ]; then
+        err "$divergences copie(s) du contrat divergent de docsearch-infra/contract/.
+  La source de vérité est docsearch-infra/contract/docsearch_contract/ :
+  y porter la modification, puis ./manage.sh sync-contract"
+    fi
+}
+
 case "${1:-help}" in
 
   start)
@@ -287,6 +357,12 @@ case "${1:-help}" in
     # machine isolée.
     WHAT="${2:-all}"
     REPOS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+    # Le contrat partagé est copié dans les dépôts consommateurs : une
+    # copie périmée produirait une image qui tourne avec d'anciennes
+    # règles, sans que rien ne le signale. On refuse de construire, plutôt
+    # que de synchroniser d'autorité — la copie est versionnée avec son
+    # dépôt, la mettre à jour est un commit, pas un effet de bord de build.
+    sync_contract check
     # ⚠️ podman sépare le magasin d'images de root de celui de chaque
     # utilisateur : une image construite SANS sudo est invisible pour les
     # unités systemd, qui tournent en root. Le symptôme est un
@@ -925,6 +1001,18 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
     fi
     ;;
 
+  sync-contract)
+    # Sans sudo : ne touche qu'à des fichiers de dépôt, jamais aux
+    # unités, aux images ni à /etc/docsearch.
+    if [ "${2:-}" = "--check" ]; then
+        sync_contract check
+        log "Contrat à jour dans tous les dépôts consommateurs."
+    else
+        sync_contract apply
+        log "Penser à committer la copie mise à jour dans le dépôt concerné."
+    fi
+    ;;
+
   backup)
     BACKUP_DIR="./backups/$(date +%Y%m%d_%H%M%S)"
     mkdir -p "$BACKUP_DIR"
@@ -998,6 +1086,10 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
     echo "                                        existants (close/open + réécriture sur place)"
     echo "    backfill-hashes [source] [--apply]  Calculer l'empreinte de contenu des documents"
     echo "                                        déjà indexés (détection de doublons)"
+    echo "    sync-contract [--check]"
+    echo "                    Recopier le contrat partagé (contract/) dans les dépôts"
+    echo "                    consommateurs — --check se contente de signaler une dérive"
+    echo "                    (contrôle exécuté automatiquement avant chaque build)"
     echo "    backup          Snapshot Elasticsearch"
     echo "    reset           Supprimer toutes les données (irréversible, sudo)"
     echo ""

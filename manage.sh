@@ -362,7 +362,12 @@ case "${1:-help}" in
     # règles, sans que rien ne le signale. On refuse de construire, plutôt
     # que de synchroniser d'autorité — la copie est versionnée avec son
     # dépôt, la mettre à jour est un commit, pas un effet de bord de build.
-    sync_contract check
+    #
+    # Seulement pour les cibles concernées : `build ui` n'a pas à échouer
+    # parce que la copie de docsearch-api a dérivé.
+    case "$WHAT" in
+      api|all) sync_contract check ;;
+    esac
     # ⚠️ podman sépare le magasin d'images de root de celui de chaque
     # utilisateur : une image construite SANS sudo est invisible pour les
     # unités systemd, qui tournent en root. Le symptôme est un

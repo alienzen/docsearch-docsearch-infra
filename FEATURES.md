@@ -169,10 +169,10 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   visée avec des réponses écrites à l'avance : elle n'interroge PAS les
   documents indexés. L'endpoint `/ask` n'existe pas côté docsearch-api,
   et aucun modèle de langage n'est branché. Le lien « Assistant IA » de
-  l'en-tête de recherche étant AFFICHÉ par défaut (`chat_enabled` vaut
-  `true`), le masquer depuis l'admin est recommandé sur toute
-  installation où cette maquette pourrait être prise pour une
-  fonctionnalité réelle. Voir `docsearch-docs/proposition_docsearch.docx`
+  l'en-tête de recherche est MASQUÉ par défaut depuis le 2026-08-15
+  (`chat_enabled` vaut `false`) : l'afficher depuis l'admin expose une
+  maquette qui peut être prise pour une fonctionnalité réelle.
+  Voir `docsearch-docs/proposition_docsearch.docx`
   pour l'option envisagée, et [PLAN-EVOLUTIONS.md](PLAN-EVOLUTIONS.md) — le
   chantier §5 (RAG réel ou recherche sémantique seule) y est resté hors
   plan, faute d'arbitrage sur le matériel qu'il suppose.

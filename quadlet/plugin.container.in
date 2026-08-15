@@ -16,14 +16,11 @@
 # il reçoit ici le strict nécessaire pour parler à Kafka, et ses propres
 # secrets par « podman secret », jamais ceux du produit.
 #
-# ⚠️  Limite connue, à lire avant d'installer un module dont on ne
-# maîtrise pas le code : ce conteneur est sur docsearch-net, où
-# Elasticsearch et Redis répondent SANS authentification. Rien n'empêche
-# donc techniquement un module d'y écrire directement, alors que tout le
-# contrat repose sur le fait qu'il ne le fasse pas. La correction — un
-# réseau dédié aux modules, avec Kafka seul rattaché aux deux — est
-# décrite dans PLAN-PLUGINS.md ; elle touche à l'unité Kafka et demande
-# sa propre fenêtre d'exploitation.
+# ⚠️  Ce conteneur n'est PAS sur docsearch-net : il vit sur
+# docsearch-plugins, d'où Elasticsearch et Redis ne sont ni joignables ni
+# même résolvables. Seuls kafka, api et nginx y sont rattachés en plus.
+# Voir common/docsearch-plugins.network pour le détail et pour ce qui a
+# été vérifié sur podman avant d'en dépendre.
 
 [Unit]
 Description=DocSearch — module complémentaire @NOM@
@@ -41,7 +38,10 @@ PodmanArgs=--network-alias=plugin-@NOM@
 # Étiquette explicite, jamais « latest » : le manifeste l'exige, et la
 # production reçoit ses images par transfert manuel.
 Image=@IMAGE@
-Network=docsearch-net.network
+# RÉSEAU DES MODULES, jamais docsearch-net : c'est ce qui met
+# Elasticsearch et Redis hors d'atteinte du module. Le changer ici
+# rouvrirait le trou que ce réseau existe pour fermer.
+Network=docsearch-plugins.network
 # Ce que le module a besoin de savoir, et rien de plus. Les valeurs sont
 # substituées à l'installation : Quadlet ne résout aucune variable
 # (c'est le principal piège de l'orchestration par unités, voir le

@@ -541,17 +541,28 @@ Si le besoin revient, il faudra l'entendre comme « le contrat de §1/§2 est tr
 >    pas routée : l'accepter installerait un module à moitié servi. Elle
 >    s'ajoutera avec le lot 3.
 >
-> ⚠️ **Limite connue, et elle n'est pas mineure.** Le conteneur d'un
-> module est sur `docsearch-net`, où Elasticsearch et Redis répondent
-> **sans authentification** (`xpack.security.enabled=false`). L'invariant 1
-> — « un plugin n'écrit jamais dans Elasticsearch » — est donc tenu par le
-> contrat, pas par le réseau : rien n'empêche techniquement un module
-> d'écrire directement dans un index. La correction est un réseau dédié
-> aux modules, avec le seul broker Kafka rattaché aux deux ; elle touche à
-> l'unité Kafka et à ses listeners annoncés, donc elle demande sa propre
-> fenêtre d'exploitation et une validation sur pile démarrée — c'est
-> pourquoi elle n'a pas été faite au passage. **Jusque-là, n'installer que
-> des modules dont on maîtrise le code.**
+> ✅ **Limite levée le 2026-08-15.** Le conteneur d'un module vit
+> désormais sur `docsearch-plugins`
+> (`quadlet/common/docsearch-plugins.network`), auquel seuls `kafka`,
+> `api` et le proxy sont rattachés en plus. Elasticsearch et Redis n'y
+> sont pas : leurs noms ne s'y résolvent même pas. L'invariant 1 est tenu
+> par le réseau, plus seulement par le contrat.
+>
+> Deux comportements de podman en dépendent, et aucun n'est évident : ils
+> ont été **vérifiés sur podman 5.7 avant d'être écrits** (deux réseaux
+> jetables, trois conteneurs, mesuré dans les deux sens) —
+> `--network-alias` s'applique à tous les réseaux d'un conteneur
+> multi-rattaché, et un conteneur rattaché au seul réseau des modules ne
+> résout pas les noms de `docsearch-net`. `valider-unites.sh` refuse
+> désormais un modèle de module qui reviendrait sur `docsearch-net`.
+>
+> ⚠️ Ce qui n'est PAS vérifié, faute de pouvoir redémarrer la pile ici :
+> le comportement sur la pile réelle, où Kafka annonce
+> `PLAINTEXT://kafka:9092` à ses clients. L'alias résout depuis les deux
+> réseaux (mesuré), donc l'adresse annoncée reste valable — mais c'est un
+> raisonnement, pas une observation. **À confirmer au premier
+> redémarrage**, avec `./manage.sh logs worker` : un `NoBrokersAvailable`
+> répété serait le symptôme.
 
 Une commande, alignée sur l'outillage existant :
 

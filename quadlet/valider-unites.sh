@@ -230,8 +230,12 @@ valider_modele_plugin() {
         -e 's/@SECRETS@/Secret=exemple-jeton\nSecret=exemple-second/' \
         "$modele" > "$tmp/unites/docsearch-plugin-exemple.container"
 
-    # Le modèle référence docsearch-net.network, qui vit dans common/ :
-    # sans lui, le générateur signale une référence croisée manquante.
+    # Le modèle référence docsearch-plugins.network, qui vit dans
+    # common/ : sans lui, le générateur signale une référence croisée
+    # manquante. docsearch-net est copié aussi — pas pour le modèle, qui
+    # n'y touche plus, mais pour que ce test échoue si quelqu'un l'y
+    # ramène sans s'en rendre compte.
+    cp "$HERE/common/docsearch-plugins.network" "$tmp/unites/"
     cp "$HERE/common/docsearch-net.network" "$tmp/unites/"
 
     if ! QUADLET_UNIT_DIRS="$tmp/unites" "$QUADLET_BIN" -dryrun -no-kmsg-log \
@@ -247,6 +251,14 @@ valider_modele_plugin() {
          | grep -q '@[A-Z_]*@'; then
         err "modèle de module complémentaire : marqueur @…@ non substitué — ajouter sa
     substitution dans ecrire_unite_plugin() (manage.sh) ET ici."
+        return 1
+    fi
+    # Un module sur docsearch-net verrait Elasticsearch et Redis, qui y
+    # répondent sans authentification : tout le contrat de non-écriture
+    # directe repose sur ce seul mot.
+    if grep -q "^Network=docsearch-net.network" "$tmp/unites/docsearch-plugin-exemple.container"; then
+        err "modèle de module complémentaire : rattaché à docsearch-net, où Elasticsearch et
+    Redis répondent sans authentification. Un module doit vivre sur docsearch-plugins."
         return 1
     fi
     log "modèle de module complémentaire : OK"

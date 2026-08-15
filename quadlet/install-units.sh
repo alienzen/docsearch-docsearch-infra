@@ -160,6 +160,11 @@ run install -m 0644 "$HERE/common/docsearch.target" "$SYSTEMD_DIR/docsearch.targ
 case "$ROLE" in
     dev|frontend|ingest)
         run install -m 0644 "$HERE/common/docsearch-net.network" "$QUADLET_DIR/"
+        # Réseau des modules complémentaires : installé même sans module,
+        # parce qu'il est référencé par des unités du cœur (api, nginx, et
+        # kafka en rôle dev). Une unité qui réclame un .network absent est
+        # refusée par le générateur Quadlet, pas ignorée.
+        run install -m 0644 "$HERE/common/docsearch-plugins.network" "$QUADLET_DIR/"
         ;;
 esac
 

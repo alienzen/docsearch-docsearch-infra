@@ -1,0 +1,40 @@
+# ── Réseau des modules complémentaires ────────────────────────
+# Réseau SÉPARÉ de docsearch-net, et c'est tout son objet.
+#
+# Sur docsearch-net, Elasticsearch et Redis répondent SANS
+# authentification (xpack.security.enabled=false) : n'importe quel
+# conteneur qui s'y trouve peut y lire et y écrire directement. Tant que
+# les modules complémentaires y étaient rattachés, l'invariant 1 du plan
+# — « un module n'écrit jamais dans Elasticsearch » — était tenu par le
+# contrat et par rien d'autre. Un module tiers mal intentionné, ou
+# simplement maladroit, pouvait le contourner en trois lignes.
+#
+# Ici, un module ne voit QUE ce qui est rattaché aux deux réseaux :
+#
+#   kafka     pour pousser des documents (capacité `ingestion`)
+#   api       pour vérifier une session et relire des documents à travers
+#             l'ACL (capacité `service_web`)
+#   nginx     pour que /ext/<nom>/ atteigne le module
+#
+# Elasticsearch, Redis et Tika restent hors d'atteinte : ils ne sont pas
+# sur ce réseau, et leurs noms ne s'y résolvent même pas.
+#
+# ⚠️  Vérifié sur podman 5.7 avant d'être écrit ici, parce que deux
+# comportements en dépendent et qu'aucun n'est évident :
+#   - `--network-alias` s'applique à TOUS les réseaux d'un conteneur
+#     multi-rattaché : `kafka` et `api` restent résolvables depuis ce
+#     réseau-ci ;
+#   - un conteneur rattaché au seul réseau des modules ne résout PAS les
+#     noms de docsearch-net — l'échec est un « bad address », pas un
+#     refus de connexion, donc franc et immédiat.
+#
+# ⚠️  En PRODUCTION, Kafka tourne en Network=host sur sa propre machine
+# (voir install-units.sh) : les modules l'atteignent par l'adresse IP de
+# KAFKA_BOOTSTRAP, pas par ce réseau. Le double rattachement de Kafka ne
+# concerne que le rôle « dev », où tout tourne sur une seule machine.
+
+[Unit]
+Description=DocSearch — réseau des modules complémentaires
+
+[Network]
+NetworkName=docsearch-plugins

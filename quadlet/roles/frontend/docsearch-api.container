@@ -12,6 +12,10 @@ Requires=docsearch-redis.service
 ContainerName=docsearch-api
 Image=localhost/docsearch/api:latest
 Network=docsearch-net.network
+# Second rattachement : réseau des modules complémentaires. Sans lui, un
+# module ne pourrait pas atteindre ce service — et avec lui SEUL, il
+# n'atteint rien d'autre (voir common/docsearch-plugins.network).
+Network=docsearch-plugins.network
 PublishPort=8000:8000
 PodmanArgs=--network-alias=api
 Exec=uvicorn search_api:app --host 0.0.0.0 --port 8000 --h11-max-incomplete-event-size 65536

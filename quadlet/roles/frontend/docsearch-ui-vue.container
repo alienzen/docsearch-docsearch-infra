@@ -12,6 +12,10 @@ After=docsearch-api.service
 ContainerName=docsearch-ui-vue
 Image=localhost/docsearch/ui-vue:latest
 Network=docsearch-net.network
+# Second rattachement : réseau des modules complémentaires. Sans lui, un
+# module ne pourrait pas atteindre ce service — et avec lui SEUL, il
+# n'atteint rien d'autre (voir common/docsearch-plugins.network).
+Network=docsearch-plugins.network
 PodmanArgs=--network-alias=ui-vue
 
 # Fragments de routage des modules complémentaires (/ext/<nom>/),

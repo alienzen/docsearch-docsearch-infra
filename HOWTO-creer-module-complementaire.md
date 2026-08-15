@@ -208,14 +208,26 @@ sudo ./manage.sh plugin disable jira   # arrêt, sources hors recherche, rien de
 sudo ./manage.sh plugin remove jira    # unité + manifeste + sources ; index et image conservés
 ```
 
-## Ce que l'installation ne protège pas encore
+## Ce que le réseau empêche
 
-Le conteneur du module est sur `docsearch-net`, où **Elasticsearch et
-Redis répondent sans authentification**. Le contrat empêche un module
-d'écrire n'importe quoi *par le chemin prévu* ; le réseau ne l'empêche pas
-d'en emprunter un autre. Tant que le réseau dédié décrit dans
-[PLAN-PLUGINS.md](PLAN-PLUGINS.md) n'est pas en place, **n'installez que
-des modules dont vous maîtrisez le code**.
+Le conteneur d'un module vit sur `docsearch-plugins`, **pas** sur
+`docsearch-net`. Elasticsearch, Redis et Tika n'y sont pas rattachés :
+leurs noms ne s'y résolvent même pas. Un module ne peut donc pas écrire
+directement dans un index, même s'il essaie — l'invariant « un module
+n'écrit jamais dans Elasticsearch » est tenu par le réseau et plus
+seulement par le contrat.
+
+Ce qu'un module atteint, et rien d'autre :
+
+| Service | Pourquoi |
+|---|---|
+| `kafka` | pousser des documents (capacité `ingestion`) |
+| `api` | vérifier une session, relire des documents à travers l'ACL |
+| — | le proxy l'atteint, lui, pour servir `/ext/<nom>/` |
+
+⚠️ Un module installé AVANT cette bascule porte encore
+`Network=docsearch-net.network` dans son unité : le réinstaller
+(`plugin install` de la même archive) régénère l'unité sur le bon réseau.
 
 ## 2 ter. Ajouter une entrée de menu (`interface`)
 

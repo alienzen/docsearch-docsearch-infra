@@ -14,6 +14,10 @@ PartOf=docsearch.target
 ContainerName=docsearch-kafka
 Image=docker.io/confluentinc/cp-kafka:8.3.0
 Network=docsearch-net.network
+# Second rattachement : réseau des modules complémentaires. Sans lui, un
+# module ne pourrait pas atteindre ce service — et avec lui SEUL, il
+# n'atteint rien d'autre (voir common/docsearch-plugins.network).
+Network=docsearch-plugins.network
 Volume=kafka-data.volume:/var/lib/kafka/data
 PublishPort=9092:9092
 PodmanArgs=--network-alias=kafka

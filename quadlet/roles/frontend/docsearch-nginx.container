@@ -15,6 +15,10 @@ After=docsearch-api.service docsearch-ui-vue.service
 ContainerName=docsearch-nginx
 Image=docker.io/library/nginx:1.27-alpine
 Network=docsearch-net.network
+# Second rattachement : réseau des modules complémentaires. Sans lui, un
+# module ne pourrait pas atteindre ce service — et avec lui SEUL, il
+# n'atteint rien d'autre (voir common/docsearch-plugins.network).
+Network=docsearch-plugins.network
 PublishPort=80:80
 PublishPort=443:443
 Volume=/etc/docsearch/nginx/nginx.conf:/etc/nginx/nginx.conf:ro

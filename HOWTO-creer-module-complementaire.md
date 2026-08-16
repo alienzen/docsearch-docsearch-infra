@@ -31,7 +31,7 @@ Ce n'est pas une liste de bonnes pratiques, c'est ce que le cœur refuse :
 {
   "nom": "jira",
   "version": "1.2.0",
-  "contract_version": "0.3.0",
+  "contract_version": "0.7.0",
   "image": "registre.interne/docsearch-plugins/jira:1.2.0",
   "description": "Tickets Jira du support",
   "auteur": "Équipe outils",
@@ -93,7 +93,7 @@ run_id = f"{datetime.now(timezone.utc).isoformat()}-{uuid4().hex[:4]}"
 
 for ticket in lire_les_tickets():
     envoyer({
-        "contract_version": "0.3.0",
+        "contract_version": "0.7.0",
         "plugin":  os.environ["DOCSEARCH_PLUGIN"],
         "source":  "tickets",
         "run_id":  run_id,
@@ -110,7 +110,7 @@ for ticket in lire_les_tickets():
     })
 
 # Ferme la passe : tout document resté sur une passe antérieure est purgé.
-envoyer({"contract_version": "0.3.0", "plugin": ..., "source": "tickets",
+envoyer({"contract_version": "0.7.0", "plugin": ..., "source": "tickets",
          "run_id": run_id, "type": "run_end"})
 ```
 
@@ -174,6 +174,112 @@ reponse = httpx.post(
 )
 ```
 
+## 2 ter. Ajouter une entrée de menu (`interface`)
+
+Un module peut poser une entrée dans le menu de l'interface de recherche :
+
+```json
+{
+  "capacites": ["service_web"],
+  "port": 8080,
+  "interface": {
+    "nav": [{"libelle": "Assistant", "chemin": "/ext/assistant/", "icone": "fr-icon-chat-3-line"}]
+  }
+}
+```
+
+Le cœur ne rend **jamais** de code venu d'un module : seulement un
+libellé (en texte), un chemin et une classe d'icône DSFR. Trois contrôles
+à l'installation :
+
+- le chemin doit être sous `/ext/<votre module>/` — un module ne pose pas
+  dans le menu de tout le monde un lien vers ailleurs ;
+- l'icône doit être une classe `fr-icon-…` connue (le cœur la rend comme
+  classe CSS) ;
+- le libellé est borné à 40 caractères : une entrée vit dans un en-tête
+  partagé, et un libellé démesuré ne tronque pas, il casse la mise en page
+  de tous.
+
+L'entrée n'apparaît que si le module est actif (`plugin enable`) et
+disparaît avec `plugin disable` — sans quoi elle mènerait à un 502.
+
+⚠️ **Le chemin doit être une route que votre module SERT.** Rappel du §2
+bis : le préfixe est retiré avant d'arriver au module, donc
+`/ext/assistant/` lui parvient comme `/`. Un module qui n'expose que
+`/ask` et déclare une entrée vers `/ext/assistant/` produit un lien de
+menu qui rend `{"detail":"Not Found"}` — l'erreur est côté module, pas
+côté proxy, et c'est le corps JSON qui le trahit. Rien ne peut le
+détecter à l'installation : le cœur ne connaît pas les routes de votre
+module. **Cliquez sur votre entrée après `plugin enable`.**
+
+Un module qui n'a pas d'écran à lui — parce que son interface est une
+page du cœur, comme l'assistant de recherche — ne déclare simplement pas
+d'entrée. Un service dorsal n'a rien à faire dans le menu.
+## 2 quater. Se laisser régler (`admin_panel`)
+
+Un module déclare des réglages **typés** ; le cœur dessine le formulaire
+dans l'écran d'administration, avec ses propres composants DSFR. Le module
+ne livre aucun balisage.
+
+```json
+{"interface": {"admin_panel": [
+  {"cle": "poll_interval", "type": "texte",   "libelle": "Intervalle (s)", "defaut": "300"},
+  {"cle": "actif",         "type": "booleen", "libelle": "Synchroniser",   "defaut": true},
+  {"cle": "bureaux",       "type": "liste",   "libelle": "Bureaux",        "defaut": ["Paris"]}
+]}}
+```
+
+Trois types seulement — `booleen`, `texte`, `liste` — parce que le cœur
+doit savoir les rendre tous les trois de façon accessible.
+
+**Comment la valeur vous parvient** : en variable d'environnement, nommée
+`DOCSEARCH_OPT_<CLÉ EN MAJUSCULES>`, et **toujours sous forme de texte**
+— `"true"`/`"false"` pour un booléen, valeurs séparées par des virgules
+pour une liste. Vous n'avez aucune convention à deviner.
+
+Le préfixe n'est pas cosmétique : sans lui, un réglage nommé
+`kafka_bootstrap` réécrirait la configuration que le cœur vous impose.
+
+⚠️ **Un réglage enregistré n'est pas un réglage appliqué.** Les variables
+d'environnement d'un conteneur sont fixées à sa création : le panneau
+signale « réglages non appliqués » jusqu'à ce qu'un administrateur lance
+
+```bash
+sudo ./manage.sh plugin appliquer <nom>
+```
+
+qui réécrit l'unité et redémarre le module.
+## 2 quinquies. Agir sur un résultat, ou apporter un écran
+
+```json
+{"interface": {
+  "result_action": [{"libelle": "Ouvrir dans Jira", "chemin": "/ext/jira/ouvrir",
+                     "icone": "fr-icon-external-link-line"}],
+  "page":          [{"titre": "Tableau de bord", "chemin": "/ext/jira/tableau"}]
+}}
+```
+
+**`result_action`** pose un lien sur **chaque** carte de résultat. Le cœur
+y ajoute l'identifiant du document : `/ext/jira/ouvrir?doc=<id>`. Trois au
+maximum — une carte de résultat sert à lire, pas à porter une barre
+d'outils.
+
+⚠️ **Recevoir un identifiant ne prouve rien.** N'importe qui peut forger
+l'adresse. Relisez le document par l'API, avec le cookie de
+l'utilisateur : `GET /document/<id>` répondra 403 s'il n'y a pas droit.
+
+**`page`** apporte un écran entier, encadré par l'interface du produit —
+en-tête, titre, retour à la recherche — et affiché dans une iframe. Une
+seule par module : deux écrans se distinguent par leur adresse à
+l'intérieur du module. Le cœur fabrique lui-même l'entrée de menu qui y
+mène ; vous n'avez pas à déclarer un `nav` en plus.
+
+⚠️ **L'iframe n'est pas une barrière de sécurité.** Elle est de même
+origine que l'application — c'est ce qui vous permet de recevoir le
+cookie de session. Elle apporte le cadre, et l'interdiction de détourner
+la navigation de l'onglet. La protection réelle reste la même qu'ailleurs :
+vous ne lisez jamais Elasticsearch, vous repassez par l'API avec le jeton
+de l'utilisateur.
 ## 3. L'archive de livraison
 
 ```bash
@@ -229,111 +335,5 @@ Ce qu'un module atteint, et rien d'autre :
 `Network=docsearch-net.network` dans son unité : le réinstaller
 (`plugin install` de la même archive) régénère l'unité sur le bon réseau.
 
-## 2 ter. Ajouter une entrée de menu (`interface`)
 
-Un module peut poser une entrée dans le menu de l'interface de recherche :
 
-```json
-{
-  "capacites": ["service_web"],
-  "port": 8080,
-  "interface": {
-    "nav": [{"libelle": "Assistant", "chemin": "/ext/assistant/", "icone": "fr-icon-chat-3-line"}]
-  }
-}
-```
-
-Le cœur ne rend **jamais** de code venu d'un module : seulement un
-libellé (en texte), un chemin et une classe d'icône DSFR. Trois contrôles
-à l'installation :
-
-- le chemin doit être sous `/ext/<votre module>/` — un module ne pose pas
-  dans le menu de tout le monde un lien vers ailleurs ;
-- l'icône doit être une classe `fr-icon-…` connue (le cœur la rend comme
-  classe CSS) ;
-- le libellé est borné à 40 caractères : une entrée vit dans un en-tête
-  partagé, et un libellé démesuré ne tronque pas, il casse la mise en page
-  de tous.
-
-L'entrée n'apparaît que si le module est actif (`plugin enable`) et
-disparaît avec `plugin disable` — sans quoi elle mènerait à un 502.
-
-⚠️ **Le chemin doit être une route que votre module SERT.** Rappel du §2
-bis : le préfixe est retiré avant d'arriver au module, donc
-`/ext/assistant/` lui parvient comme `/`. Un module qui n'expose que
-`/ask` et déclare une entrée vers `/ext/assistant/` produit un lien de
-menu qui rend `{"detail":"Not Found"}` — l'erreur est côté module, pas
-côté proxy, et c'est le corps JSON qui le trahit. Rien ne peut le
-détecter à l'installation : le cœur ne connaît pas les routes de votre
-module. **Cliquez sur votre entrée après `plugin enable`.**
-
-Un module qui n'a pas d'écran à lui — parce que son interface est une
-page du cœur, comme l'assistant de recherche — ne déclare simplement pas
-d'entrée. Un service dorsal n'a rien à faire dans le menu.
-
-## 2 quater. Se laisser régler (`admin_panel`)
-
-Un module déclare des réglages **typés** ; le cœur dessine le formulaire
-dans l'écran d'administration, avec ses propres composants DSFR. Le module
-ne livre aucun balisage.
-
-```json
-{"interface": {"admin_panel": [
-  {"cle": "poll_interval", "type": "texte",   "libelle": "Intervalle (s)", "defaut": "300"},
-  {"cle": "actif",         "type": "booleen", "libelle": "Synchroniser",   "defaut": true},
-  {"cle": "bureaux",       "type": "liste",   "libelle": "Bureaux",        "defaut": ["Paris"]}
-]}}
-```
-
-Trois types seulement — `booleen`, `texte`, `liste` — parce que le cœur
-doit savoir les rendre tous les trois de façon accessible.
-
-**Comment la valeur vous parvient** : en variable d'environnement, nommée
-`DOCSEARCH_OPT_<CLÉ EN MAJUSCULES>`, et **toujours sous forme de texte**
-— `"true"`/`"false"` pour un booléen, valeurs séparées par des virgules
-pour une liste. Vous n'avez aucune convention à deviner.
-
-Le préfixe n'est pas cosmétique : sans lui, un réglage nommé
-`kafka_bootstrap` réécrirait la configuration que le cœur vous impose.
-
-⚠️ **Un réglage enregistré n'est pas un réglage appliqué.** Les variables
-d'environnement d'un conteneur sont fixées à sa création : le panneau
-signale « réglages non appliqués » jusqu'à ce qu'un administrateur lance
-
-```bash
-sudo ./manage.sh plugin appliquer <nom>
-```
-
-qui réécrit l'unité et redémarre le module.
-
-## 2 quinquies. Agir sur un résultat, ou apporter un écran
-
-```json
-{"interface": {
-  "result_action": [{"libelle": "Ouvrir dans Jira", "chemin": "/ext/jira/ouvrir",
-                     "icone": "fr-icon-external-link-line"}],
-  "page":          [{"titre": "Tableau de bord", "chemin": "/ext/jira/tableau"}]
-}}
-```
-
-**`result_action`** pose un lien sur **chaque** carte de résultat. Le cœur
-y ajoute l'identifiant du document : `/ext/jira/ouvrir?doc=<id>`. Trois au
-maximum — une carte de résultat sert à lire, pas à porter une barre
-d'outils.
-
-⚠️ **Recevoir un identifiant ne prouve rien.** N'importe qui peut forger
-l'adresse. Relisez le document par l'API, avec le cookie de
-l'utilisateur : `GET /document/<id>` répondra 403 s'il n'y a pas droit.
-
-**`page`** apporte un écran entier, encadré par l'interface du produit —
-en-tête, titre, retour à la recherche — et affiché dans une iframe. Une
-seule par module : deux écrans se distinguent par leur adresse à
-l'intérieur du module. Le cœur fabrique lui-même l'entrée de menu qui y
-mène ; vous n'avez pas à déclarer un `nav` en plus.
-
-⚠️ **L'iframe n'est pas une barrière de sécurité.** Elle est de même
-origine que l'application — c'est ce qui vous permet de recevoir le
-cookie de session. Elle apporte le cadre, et l'interdiction de détourner
-la navigation de l'onglet. La protection réelle reste la même qu'ailleurs :
-vous ne lisez jamais Elasticsearch, vous repassez par l'API avec le jeton
-de l'utilisateur.

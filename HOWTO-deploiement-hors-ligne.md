@@ -327,6 +327,12 @@ son auteur.
 ```bash
 # machine de préparation, ou poste de l'auteur du module
 podman build -t <registre>/<module>:<version> .
+# ⚠️ Supprimer l'archive AVANT : le transport docker-archive de podman ne
+# sait pas écrire dans une archive existante et s'arrête sur « Error:
+# docker-archive doesn't support modifying existing images ». Il n'a pas
+# d'option de forçage — vérifié sur podman 5.7. Le piège ne se voit qu'à
+# la DEUXIÈME construction, quand image.tar est déjà là.
+rm -f image.tar
 podman save -o image.tar <registre>/<module>:<version>
 tar -cf <module>-<version>.tar manifeste.json image.tar
 ```

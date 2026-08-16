@@ -653,3 +653,117 @@ visées**. Beaucoup de ce qu'on appelle « plugin de fonctionnalité » se rév�
 justifie par le nombre de choses qu'il portera et par le fait qu'elles viennent
 de **l'extérieur de l'équipe** ; s'il n'en porte que deux, écrites ici, il aura
 coûté trois semaines pour rien.
+
+---
+
+## Types de source visés — entrées de conception (2026-08-16)
+
+Le conseil ci-dessus demandait la liste des cas réellement visés. La voici pour
+les **sources de données**, notée après coup, les lots 0 à 4 étant livrés.
+**Aucun de ces trois cas n'est engagé** : ce sont des entrées de conception,
+pas un lot. Rien n'est à faire tant que l'un d'eux ne devient pas réel.
+
+| Cas | Instances | Identifiants | ACL |
+|---|---|---|---|
+| **Flux RSS** | plusieurs flux | aucun, en général | documents publics → politique `public` |
+| **Serveurs de mail** | plusieurs serveurs | compte de service par serveur | par destinataire → `fournie` + liste blanche |
+| **GED Alfresco** | plusieurs espaces | compte ou jeton par instance | modèle de permissions propre, à mapper |
+
+### Ce que ces trois cas invalident dans l'existant
+
+**Un manifeste déclare aujourd'hui une liste FIGÉE de sources** ([manifeste.py](contract/docsearch_contract/manifeste.py)) :
+l'administrateur installe une image qui apporte ses sources avec elle, il n'en
+instancie aucune. Les trois cas sont intrinsèquement multi-instances — plusieurs
+flux, plusieurs serveurs, plusieurs espaces — et **aucun n'entre dans ce
+modèle**. Ce qu'il faudrait est un **type de source** : un libellé, le schéma
+des champs que l'administrateur remplit pour en créer une instance, et le
+mapping ES associé. C'est une clé nouvelle du manifeste, enregistrée à
+l'installation pour que l'interface sache dessiner un formulaire de création —
+au même titre que `AdminSqlSourceForm.vue` pour les sources SQL.
+
+⚠️ **Un module ne peut pas apprendre qu'une source vient d'être créée.** C'est
+le blocage principal, et il est voulu : sur `docsearch-plugins`
+([common/docsearch-plugins.network](quadlet/common/docsearch-plugins.network)),
+Redis n'est ni joignable ni résolvable, et toute la configuration d'un module
+arrive en variables d'environnement figées à la création du conteneur. Là où
+`web_worker.py` relit `get_sources()` à chaque tick et démarre la source
+nouvelle sans redémarrage, un module ne le peut pas. Un bouton « créer une
+source » livré sans plus produirait donc une source enregistrée, cherchable,
+visible dans l'administration, et **que personne ne collecte** — exactement la
+panne silencieuse que le reste du produit s'applique à éviter.
+
+La voie qui préserve l'isolement : le module **demande ses sources à l'API**,
+qui est sur le réseau des modules précisément pour ça. Une route
+`GET /plugins/<nom>/sources`, relue à chaque passe, et on retrouve la sémantique
+native — création dans l'interface, prise en compte au tick suivant, sans root
+ni redémarrage.
+
+⚠️ **Les identifiants par instance font tomber le modèle de secrets actuel.**
+Mail et Alfresco en apportent chacun. Or les secrets d'un module sont des *noms*
+de secrets podman déclarés au manifeste et montés à la création du conteneur :
+créer une source depuis l'interface exigerait un accès root, un
+`podman secret create`, une réécriture d'unité et un redémarrage — tout ce que
+la création depuis l'administration est censée supprimer, et précisément sur les
+deux cas qui comptent. Le produit a déjà résolu ça nativement :
+[sql_dsn_registry.py](../docsearch-api/app/sql_dsn_registry.py) chiffre les DSN
+(Fernet) dans Redis, les ajoute depuis le panneau **sans recréation de
+conteneur**, et calcule un « hint » à l'écriture pour que lister les DSN ne
+demande jamais la clé. C'est le modèle à étendre.
+
+**Conséquence sur la route ci-dessus** : elle ne distribuerait plus seulement de
+la configuration mais **des identifiants**. Une restriction au seul réseau des
+modules ne suffit alors plus — il faut une authentification par module (jeton en
+`podman secret`), et un module ne doit pouvoir lire que les identifiants des
+sources qu'il possède. C'est le coût caché de la fonctionnalité, et il est
+structurant.
+
+### Le point de vigilance : l'ACL
+
+Les trois cas exercent **trois modèles d'accès différents**, ce qui est à la
+fois leur intérêt et leur danger — le §0 prévenait déjà qu'« un quatrième modèle
+d'ACL improvisé par plugin est exactement ce qu'il ne faut pas laisser
+arriver ». Un type de source doit donc déclarer le **schéma de collecte** et
+rien du modèle d'accès : les trois politiques existantes — `public`, `groupes`,
+`fournie` — restent choisies **par l'administrateur à la création**, comme
+`add-plugin-source` l'impose déjà.
+
+Le mail est le cas à traiter en dernier, jamais en pilote : l'ACL d'un message
+est par destinataire, dans un index de recherche fédéré.
+[`build_acl_filter`](../docsearch-api/app/search_api.py) est *fail-closed*, donc
+une ACL **absente** rend le document invisible — mais rien ne protège d'une ACL
+**fausse**, qui exposerait les boîtes de tout le monde à tout le monde.
+
+### Deux conclusions à retenir
+
+**RSS n'a probablement pas besoin d'un module.** Un type de source web complet
+existe déjà — registre, ordonnanceur, indexeur, panneau. Un flux est une URL et
+un parseur : une variante du type web sera vraisemblablement moins chère que le
+cadre censé l'accueillir, et le conseil ci-dessus s'applique tel quel, un
+connecteur RSS ne venant pas de l'extérieur de l'équipe. ⚠️ À vérifier aussi :
+la production est sur intranet sans accès Internet, donc les flux externes ne
+seraient pas joignables sans mandataire — en pratique, quelques flux internes.
+
+**Concevoir le type contre Alfresco, le jour venu.** C'est celui qui justifie
+vraiment le cadre : système externe, connecteur plausiblement livré et maintenu
+hors de l'équipe, multi-instances, identifiants réels, modèle d'ACL réel. Un
+contrat conçu contre Alfresco accueillera RSS et le mail ; conçu contre le
+module d'exemple — qui lit un fichier JSON local, ce qu'aucun connecteur réel ne
+fera — il n'accueillera aucun des trois.
+
+### Ce qui a été fait tout de suite
+
+Un seul point de cette analyse ne pouvait pas attendre, parce qu'il concerne le
+code **en place** : rien ne vérifiait qu'un `es_index` n'était pas déjà pris.
+`plugin_indexer.reconcilier()` supprimant par index **sans filtrer sur la
+source**, deux sources partageant un index se vidaient mutuellement à chaque
+`run_end`, jusqu'à ce que le garde-fou des 50 % bloque la réconciliation pour de
+bon — le tout en silence. Corrigé le 2026-08-16 en trois endroits : le contrat
+refuse deux sources d'un même manifeste sur le même index, le registre
+(`plugin_sources_config._verifier_index_libre`) refuse un index déjà pris par
+l'une des quatre familles de sources, et `plugin install` l'anticipe avant de
+charger l'image.
+
+Corollaire pour le futur formulaire de création : **ne pas demander `es_index` à
+l'administrateur**, le dériver du nom de la source. Un champ de moins à remplir,
+et le piège disparaît par construction plutôt que d'être rattrapé par un
+contrôle.

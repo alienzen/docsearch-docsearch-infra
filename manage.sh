@@ -1526,9 +1526,13 @@ print(f\"{len(nav)} entrée(s) de menu, {len(i['admin_panel'])} réglage(s), \"
 
         log "Module « $PLG_NOM » $PLG_VERSION installé."
         log "Démarrer : sudo ./manage.sh plugin enable $PLG_NOM"
-        warn "Ce conteneur est sur docsearch-net, où Elasticsearch et Redis répondent sans
-  authentification : le contrat empêche un module d'écrire n'importe quoi, le réseau
-  ne l'en empêche pas encore. Voir PLAN-PLUGINS.md avant d'installer du code tiers."
+        warn "Code TIERS. Ce conteneur est isolé sur docsearch-plugins : Elasticsearch, Redis
+  et Tika n'y sont ni joignables ni même résolvables, et il ne reçoit aucun secret du
+  produit — ni docsearch.env, ni mot de passe de liaison LDAP, ni DSN. Restent sous
+  votre responsabilité : il parle à Kafka, donc il alimente les sources de son manifeste
+  (dont l'ACL est décidée par l'administrateur, jamais par lui), et il DÉCLARE SES
+  PROPRES bornes de ressources — ici $PLG_CPUS CPU et $PLG_MEM, dont le contrat vérifie
+  la forme et non l'ampleur. Voir PLAN-PLUGINS.md avant d'installer du code tiers."
         ;;
 
       list)

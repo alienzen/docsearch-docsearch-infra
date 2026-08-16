@@ -318,6 +318,34 @@ sudo podman images
 systemctl list-units 'docsearch-*'
 ```
 
+## 6 bis. Transférer un module complémentaire
+
+Un module suit le même chemin que les images du cœur, à une différence
+près : son archive porte DÉJÀ son image et son manifeste, produits par
+son auteur.
+
+```bash
+# machine de préparation, ou poste de l'auteur du module
+podman build -t <registre>/<module>:<version> .
+podman save -o image.tar <registre>/<module>:<version>
+tar -cf <module>-<version>.tar manifeste.json image.tar
+```
+
+Le fichier obtenu se transfère comme le reste (§5), puis sur la machine
+de destination :
+
+```bash
+sudo ./manage.sh plugin install /chemin/<module>-<version>.tar
+```
+
+⚠️ `plugin install` charge l'image lui-même : ne pas la charger à part.
+Il valide le manifeste AVANT tout chargement, donc un module refusé ne
+laisse ni image, ni unité, ni source enregistrée.
+
+⚠️ Le manifeste doit viser une version de contrat que le cœur sert
+(`contract/docsearch_contract/version.py`). Une image transférée avec un
+manifeste trop ancien est refusée à l'installation, pas au démarrage.
+
 ## 7. Mettre à jour une brique
 
 ```bash

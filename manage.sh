@@ -1319,8 +1319,13 @@ print(json.dumps(get_config('$SOURCE'), indent=2, ensure_ascii=False))
   Le créer d'abord :  printf '%s' '<valeur>' | sudo podman secret create $secret -"
         done
 
-        # Noms de sources libres ? Vérifié AVANT le chargement de
-        # l'image, et l'enregistrement ne se fait qu'après.
+        # Noms de sources ET index Elasticsearch libres ? Vérifié AVANT le
+        # chargement de l'image, et l'enregistrement ne se fait qu'après.
+        # Le registre refuse de son côté un index déjà pris
+        # (plugin_sources_config._verifier_index_libre) — c'est lui qui
+        # fait foi, y compris pour « add-plugin-source » ; le contrôle ici
+        # ne fait que l'anticiper, pour ne pas laisser une image chargée
+        # derrière un manifeste refusé.
         export MANIFESTE_JSON="$MANIFESTE"
         init_run -e MANIFESTE_JSON python3 -c "
 import os, json, sys
@@ -1333,6 +1338,16 @@ for registre in (file_sources_config, sql_sources_config, web_sources_config):
     natives.update(registre.get_sources())
 plugins = get_sources()
 
+# Qui occupe quel index, toutes familles de sources confondues. Une
+# source web en occupe DEUX (crawl intermédiaire + index final).
+index_pris = {}
+for nom_autre, autre in natives.items():
+    index_pris[autre.es_index] = nom_autre
+    if getattr(autre, 'crawl_index', ''):
+        index_pris[autre.crawl_index] = nom_autre
+for nom_autre, autre in plugins.items():
+    index_pris[autre.es_index] = nom_autre
+
 conflits = []
 for source in m['sources']:
     nom = source['nom']
@@ -1340,8 +1355,21 @@ for source in m['sources']:
         conflits.append(f\"'{nom}' est déjà une source native\")
     elif nom in plugins and plugins[nom].plugin != m['nom']:
         conflits.append(f\"'{nom}' appartient déjà au module '{plugins[nom].plugin}'\")
+    # Réinstallation du même module : la source retrouve SON index, ce
+    # n'est pas un conflit. C'en est un dès qu'une AUTRE source l'occupe.
+    proprietaire = index_pris.get(source['es_index'])
+    if proprietaire is not None and proprietaire != nom:
+        conflits.append(
+            f\"l'index '{source['es_index']}' de la source '{nom}' est déjà utilisé \"
+            f\"par la source '{proprietaire}'\"
+        )
 if conflits:
-    print('Noms de source déjà pris : ' + ' ; '.join(conflits), file=sys.stderr)
+    print('Installation impossible : ' + ' ; '.join(conflits), file=sys.stderr)
+    print(
+        \"Un index partagé par deux sources est une perte de documents : la \"
+        \"réconciliation de fin de passe supprime par index, sans distinguer la source.\",
+        file=sys.stderr,
+    )
     sys.exit(1)
 " || err "Installation refusée — rien n'a été chargé."
 

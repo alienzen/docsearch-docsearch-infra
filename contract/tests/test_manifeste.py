@@ -130,6 +130,38 @@ def test_source_declaree_deux_fois_refusee():
         manifeste.valider_manifeste(m)
 
 
+def test_deux_sources_sur_le_meme_index_refusees():
+    """Deux sources distinctes, un seul index : refusé, et pas pour une
+    question de propreté.
+
+    `plugin_indexer.reconcilier()` supprime par `es_index` tout document
+    qui ne porte pas le `run_id` de la passe qui vient de finir, SANS
+    filtrer sur la source. Les deux sources se videraient donc l'une
+    l'autre à chaque passe, jusqu'à ce que le garde-fou des 50 % bloque
+    la réconciliation pour de bon. Rien, nulle part, ne le signalait."""
+    m = base()
+    m["sources"].append({
+        "nom": "commentaires", "es_index": m["sources"][0]["es_index"],
+        "acl_policy": "groupes", "acl_groups": ["DL-SUPPORT"],
+    })
+    with pytest.raises(ContratInvalide, match="même index"):
+        manifeste.valider_manifeste(m)
+
+
+def test_deux_sources_sur_des_index_distincts_acceptees():
+    """Le pendant du test précédent : c'est bien l'index partagé qui est
+    refusé, pas le fait d'avoir deux sources."""
+    m = base()
+    m["sources"].append({
+        "nom": "commentaires", "es_index": "commentaires_jira",
+        "acl_policy": "groupes", "acl_groups": ["DL-SUPPORT"],
+    })
+
+    assert [s["nom"] for s in manifeste.valider_manifeste(m)["sources"]] == [
+        "tickets", "commentaires",
+    ]
+
+
 def test_secrets_sont_des_noms_pas_des_valeurs():
     m = manifeste.valider_manifeste(base(secrets=["jira-token"]))
     assert m["secrets"] == ["jira-token"]

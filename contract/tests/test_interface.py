@@ -22,15 +22,18 @@ def test_entree_de_menu_valide():
 
 
 def test_interface_vide_acceptee():
-    assert interface.valider_interface({}, "assistant") == {"nav": [], "admin_panel": []}
+    assert interface.valider_interface({}, "assistant") == {
+        "nav": [], "admin_panel": [], "result_action": [], "page": [],
+    }
 
 
-def test_accroche_non_servie_refusee():
-    """`result_action`, `admin_panel` et `page` sont prévues par le plan
-    et ne sont pas rendues : les accepter ferait s'installer un module qui
-    promet un écran que rien n'affiche."""
+def test_accroche_inconnue_refusee():
+    """Le vocabulaire est fermé : une accroche que le cœur ne rend pas
+    ferait s'installer un module qui promet un écran que rien n'affiche.
+    Les quatre du plan sont servies — c'est une CINQUIÈME qui est refusée
+    ici, et ce contrôle reste utile pour la suivante."""
     with pytest.raises(ContratInvalide, match="non servie"):
-        interface.valider_interface({"result_action": []}, "assistant")
+        interface.valider_interface({"widget_barre_laterale": []}, "assistant")
 
 
 def test_lien_vers_un_autre_module_refuse():
@@ -160,3 +163,64 @@ def test_valeur_trop_longue_refusee():
 
 def test_interface_sans_panneau_rend_une_liste_vide():
     assert interface.valider_interface({}, "jira")["admin_panel"] == []
+
+
+# ── Actions de résultat et pages ─────────────────────────────
+
+def accroche(cle, *entrees, module="jira"):
+    return interface.valider_interface({cle: list(entrees)}, module)[cle]
+
+
+def test_action_de_resultat_valide():
+    a = accroche("result_action", {"libelle": "Ouvrir", "chemin": "/ext/jira/ouvrir"})[0]
+    assert a["chemin"] == "/ext/jira/ouvrir"
+
+
+def test_page_valide_accepte_titre_ou_libelle():
+    """`titre` est le mot naturel pour un écran, `libelle` pour un lien —
+    les deux sont acceptés plutôt que d'imposer une gymnastique."""
+    assert accroche("page", {"titre": "Tableau", "chemin": "/ext/jira/t"})[0]["libelle"] == "Tableau"
+    assert accroche("page", {"libelle": "Tableau", "chemin": "/ext/jira/t"})[0]["libelle"] == "Tableau"
+
+
+@pytest.mark.parametrize("cle", ["result_action", "page"])
+def test_lien_vers_un_autre_module_refuse(cle):
+    """Le même contrôle que pour `nav`, et pour la même raison : un module
+    ne pointe que vers lui-même."""
+    with pytest.raises(ContratInvalide, match="hors de /ext/jira/"):
+        accroche(cle, {"libelle": "X", "chemin": "/ext/autre/x"})
+
+
+@pytest.mark.parametrize("cle", ["result_action", "page"])
+def test_chemin_hors_ext_refuse(cle):
+    with pytest.raises(ContratInvalide, match="chemin invalide"):
+        accroche(cle, {"libelle": "X", "chemin": "/admin.html"})
+
+
+@pytest.mark.parametrize("cle", ["result_action", "page"])
+def test_libelle_obligatoire(cle):
+    with pytest.raises(ContratInvalide, match="sans libellé"):
+        accroche(cle, {"chemin": "/ext/jira/x"})
+
+
+def test_trop_d_actions_refusees():
+    """Une carte de résultat sert à lire, pas à porter une barre
+    d'outils."""
+    with pytest.raises(ContratInvalide, match="maximum"):
+        accroche("result_action", *[{"libelle": f"A{i}", "chemin": "/ext/jira/x"} for i in range(4)])
+
+
+def test_deux_pages_refusees():
+    with pytest.raises(ContratInvalide, match="Une seule page"):
+        accroche("page", {"titre": "A", "chemin": "/ext/jira/a"}, {"titre": "B", "chemin": "/ext/jira/b"})
+
+
+def test_icone_libre_refusee_sur_une_action():
+    with pytest.raises(ContratInvalide, match="icône inconnue"):
+        accroche("result_action", {"libelle": "X", "chemin": "/ext/jira/x", "icone": "ma-classe"})
+
+
+def test_le_vocabulaire_est_complet():
+    """Les quatre accroches du §3 sont servies : plus aucune n'est
+    refusée pour cause de non-implémentation."""
+    assert set(interface.ACCROCHES) == {"nav", "admin_panel", "result_action", "page"}

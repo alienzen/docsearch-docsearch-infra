@@ -431,8 +431,9 @@ en bout).
 
 ## §3. Interface — points d'accroche déclaratifs
 
-> **Deux accroches sur quatre.** `nav` le 2026-08-15, `admin_panel` le
-> 2026-08-16.
+> **Les quatre accroches sont servies.** `nav` le 2026-08-15,
+> `admin_panel`, `result_action` et `page` le 2026-08-16 — le vocabulaire
+> du §3 est complet.
 >
 > Livré : `interface.py` dans le contrat (version 0.5.0), l'accroche
 > `nav` — une entrée de menu —, son enregistrement dans Redis par
@@ -453,13 +454,22 @@ en bout).
 > `./manage.sh plugin appliquer <nom>` — un réglage enregistré sans effet
 > serait exactement la panne silencieuse qu'on évite partout ailleurs.
 >
-> **`result_action` et `page` ne sont PAS servies** — les
-> déclarer fait refuser le manifeste, plutôt qu'installer un module qui
-> promet un écran que rien n'affiche. Elles suivront le chemin que `nav`
-> a défriché : validation dans `interface.py`, écriture Redis à
-> l'installation, publication par `/ui-config`, rendu par le composant
-> concerné. C'est un choix de découpage, pas une difficulté technique —
-> la tranche verticale complète valait mieux que quatre moitiés.
+> `result_action` pose un lien sur chaque carte de résultat, avec
+> l'identifiant du document en paramètre — trois au maximum, et le module
+> doit relire le document par l'API : recevoir un identifiant ne prouve
+> pas qu'on a le droit de le lire. `page` apporte un écran entier,
+> encadré par l'interface (`module.html?m=<nom>`, une seule page hôte
+> pour tous les modules — le paquet est construit avant qu'aucun module
+> n'existe).
+>
+> ⚠️ **L'iframe de `page` n'est PAS une barrière de sécurité**, contrairement
+> à ce que le §3 laissait entendre. Elle est de MÊME ORIGINE que
+> l'application — c'est ce qui permet au module de recevoir le cookie de
+> session, donc de savoir qui parle. Ce qu'elle apporte réellement : le
+> cadre, et l'interdiction de détourner la navigation de l'onglet
+> (`allow-top-navigation` absent du bac à sable). La protection tient
+> ailleurs, et elle n'a pas changé : un module ne lit jamais
+> Elasticsearch, il repasse par l'API avec le jeton de l'utilisateur.
 >
 > Trois contrôles portent tout le reste : une entrée ne peut viser que
 > `/ext/<son propre module>/` (sans quoi un module poserait dans le menu

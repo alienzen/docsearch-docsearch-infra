@@ -1386,9 +1386,10 @@ import os, json
 from plugin_ui_config import enregistrer
 m = json.loads(os.environ['MANIFESTE_JSON'])
 nav = m['interface']['nav']
-panneau = m['interface']['admin_panel']
-enregistrer(m['nom'], nav, panneau)
-print(f\"{len(nav)} entrée(s) de menu, {len(panneau)} réglage(s) déclaré(s)\")
+i = m['interface']
+enregistrer(m['nom'], nav, i['admin_panel'], i['result_action'], i['page'])
+print(f\"{len(nav)} entrée(s) de menu, {len(i['admin_panel'])} réglage(s), \"
+      f\"{len(i['result_action'])} action(s), {len(i['page'])} page(s)\")
 " || warn "Accroches d'interface non enregistrées — le module fonctionnera, sans entrée de menu."
 
         mkdir -p "$PLUGINS_DIR"

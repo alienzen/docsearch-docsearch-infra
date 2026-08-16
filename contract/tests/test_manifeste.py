@@ -197,4 +197,6 @@ def test_entree_de_menu_exige_le_service_web():
 
 
 def test_manifeste_sans_interface_rend_une_interface_vide():
-    assert manifeste.valider_manifeste(base())["interface"] == {"nav": [], "admin_panel": []}
+    assert manifeste.valider_manifeste(base())["interface"] == {
+        "nav": [], "admin_panel": [], "result_action": [], "page": [],
+    }

@@ -306,5 +306,34 @@ sudo ./manage.sh plugin appliquer <nom>
 
 qui réécrit l'unité et redémarre le module.
 
-⚠️ Deux autres accroches sont prévues (`result_action`, `page`) et **ne
-sont pas encore servies** : les déclarer fait refuser le manifeste.
+## 2 quinquies. Agir sur un résultat, ou apporter un écran
+
+```json
+{"interface": {
+  "result_action": [{"libelle": "Ouvrir dans Jira", "chemin": "/ext/jira/ouvrir",
+                     "icone": "fr-icon-external-link-line"}],
+  "page":          [{"titre": "Tableau de bord", "chemin": "/ext/jira/tableau"}]
+}}
+```
+
+**`result_action`** pose un lien sur **chaque** carte de résultat. Le cœur
+y ajoute l'identifiant du document : `/ext/jira/ouvrir?doc=<id>`. Trois au
+maximum — une carte de résultat sert à lire, pas à porter une barre
+d'outils.
+
+⚠️ **Recevoir un identifiant ne prouve rien.** N'importe qui peut forger
+l'adresse. Relisez le document par l'API, avec le cookie de
+l'utilisateur : `GET /document/<id>` répondra 403 s'il n'y a pas droit.
+
+**`page`** apporte un écran entier, encadré par l'interface du produit —
+en-tête, titre, retour à la recherche — et affiché dans une iframe. Une
+seule par module : deux écrans se distinguent par leur adresse à
+l'intérieur du module. Le cœur fabrique lui-même l'entrée de menu qui y
+mène ; vous n'avez pas à déclarer un `nav` en plus.
+
+⚠️ **L'iframe n'est pas une barrière de sécurité.** Elle est de même
+origine que l'application — c'est ce qui vous permet de recevoir le
+cookie de session. Elle apporte le cadre, et l'interdiction de détourner
+la navigation de l'onglet. La protection réelle reste la même qu'ailleurs :
+vous ne lisez jamais Elasticsearch, vous repassez par l'API avec le jeton
+de l'utilisateur.

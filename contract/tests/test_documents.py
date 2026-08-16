@@ -215,3 +215,20 @@ def test_politique_fournie_sans_acl_du_tout_rejette_le_document():
     src = source(acl_policy="fournie", acl_principaux=["DL-RH"])
     with pytest.raises(ContratInvalide, match="Aucun principal autorisé"):
         documents.construire_document(src, {"id": "T-1"}, "passe-1")
+
+
+def test_le_repli_de_filepath_n_imite_pas_un_membre_d_archive():
+    """L'interface pose « Extrait d'une archive » dès que `filepath`
+    contient « :: » — la convention des membres d'archive. Un document
+    poussé par un module en portait donc la mention, à tort. Constaté à
+    l'écran, pas en relisant."""
+    _, doc, _ = documents.construire_document(source(), {"id": "T-1"}, "passe-1")
+    assert "::" not in doc["filepath"]
+    assert doc["filepath"] == "plugin:tickets/T-1"
+
+
+def test_l_url_fournie_par_le_module_reste_prioritaire():
+    _, doc, _ = documents.construire_document(
+        source(), {"id": "T-1", "url": "https://jira/T-1"}, "passe-1",
+    )
+    assert doc["filepath"] == "https://jira/T-1"

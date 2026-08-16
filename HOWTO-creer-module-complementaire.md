@@ -134,8 +134,25 @@ conteneur** :
 ```
 
 `./manage.sh plugin install` écrit un fragment nginx dans
-`/etc/docsearch/nginx/plugins/<nom>.conf` et recharge le proxy. Le module
-devient joignable sous `/ext/<nom>/`.
+`/etc/docsearch/nginx/plugins/<nom>.conf`, et c'est `plugin enable` qui
+recharge le proxy, une fois le conteneur debout. Le module devient
+joignable sous `/ext/<nom>/`.
+
+⚠️ **Cet ordre n'est pas arbitraire.** Le fragment emploie un `proxy_pass`
+statique, sans `resolver` : nginx ne résout le nom du module qu'au
+démarrage et à chaque rechargement, jamais par requête. Deux conséquences,
+toutes deux tenues par `manage.sh` et qu'un script maison doit reproduire :
+
+- **recharger seulement une fois le conteneur démarré.** Un module recréé
+  change d'adresse ; le proxy rechargé avant garderait l'ancienne, et
+  `/ext/<nom>/` rendrait 502 pendant que le module tourne sans rien
+  journaliser d'anormal. `plugin enable` et `plugin appliquer` rechargent
+  donc **après** avoir (re)démarré l'unité.
+- **ne jamais recharger quand le module est arrêté.** Un nom qui ne résout
+  pas n'est pas un amont injoignable pour nginx, c'est une configuration
+  invalide (`host not found in upstream`) : il rejette l'ensemble et
+  refuserait de redémarrer, emportant l'interface pour un module éteint.
+  C'est pourquoi `plugin disable` ne recharge rien.
 
 ⚠️ **Le préfixe est retiré avant d'arriver au module** : une requête sur
 `/ext/assistant/ask` lui parvient comme `/ask`. Il n'a donc pas à

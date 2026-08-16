@@ -329,9 +329,27 @@ EOF
 }
 
 recharger_nginx() {
-    local recharge=0
+    local recharge=0 vu=0
     for conteneur in docsearch-ui-vue docsearch-nginx; do
         $PODMAN container exists "$conteneur" 2>/dev/null || continue
+        vu=1
+        # La configuration est éprouvée AVANT toute décision, et c'est ce
+        # qui sépare les deux causes possibles d'un rechargement raté :
+        # une configuration invalide (typiquement un `proxy_pass` vers un
+        # module arrêté, dont le nom ne résout pas) d'un rechargement à
+        # chaud qui ne passe pas pour une autre raison. Sans ce contrôle,
+        # le repli ci-dessous redémarrait nginx dans le premier cas — et
+        # nginx REFUSE de démarrer sur une configuration invalide, ce qui
+        # transformait un rechargement refusé, inoffensif puisque
+        # l'ancienne configuration continue de servir, en interface à
+        # terre.
+        if ! $PODMAN exec "$conteneur" nginx -t >/dev/null 2>&1; then
+            warn "$conteneur : configuration REFUSÉE, ni rechargé ni redémarré — l'ancienne continue de servir.
+  Cause la plus probable : un module à l'arrêt dont le fragment /ext/ pointe
+  vers un conteneur absent (« host not found in upstream »). Le détail :
+  sudo $PODMAN exec $conteneur nginx -t"
+            continue
+        fi
         if $PODMAN exec "$conteneur" nginx -s reload >/dev/null 2>&1; then
             log "$conteneur rechargé."
             recharge=1
@@ -340,7 +358,70 @@ recharger_nginx() {
             systemctl restart "$conteneur" 2>/dev/null && recharge=1
         fi
     done
-    [ "$recharge" -eq 1 ] || warn "Aucun conteneur nginx en fonctionnement : le routage /ext/ prendra effet au prochain démarrage."
+    # Le message ne vaut que si AUCUN conteneur nginx n'a été trouvé. Un
+    # nginx bien présent dont la configuration vient d'être refusée a déjà
+    # été signalé ci-dessus, et annoncer qu'il n'y en a aucun enverrait
+    # chercher au mauvais endroit.
+    if [ "$recharge" -eq 0 ] && [ "$vu" -eq 0 ]; then
+        warn "Aucun conteneur nginx en fonctionnement : le routage /ext/ prendra effet au prochain démarrage."
+    fi
+}
+
+# ── Reconnexion du proxy APRÈS (re)démarrage d'un module ──────
+# nginx ne résout le nom du module qu'au démarrage et à chaque
+# rechargement : le fragment généré emploie un proxy_pass STATIQUE, sans
+# `resolver`, pour ne pas dépendre de l'adresse du DNS de podman (voir
+# ecrire_fragment_nginx). Or un conteneur détruit puis recréé change
+# d'adresse. Un module redémarré tourne alors normalement, ne journalise
+# rien d'anormal — et le proxy continue d'écrire à l'ancienne adresse,
+# avec un 502 pour seule trace, côté navigateur seulement.
+#
+# Constaté le 2026-08-16 sur la mise à jour de l'assistant en 0.1.1 :
+# « plugin install » rechargeait bien le proxy, mais la suite — « plugin
+# enable », « plugin appliquer », ou n'importe quel systemctl restart —
+# recréait le conteneur APRÈS, périmant ce qui venait d'être résolu.
+# D'où cette fonction, appelée en DERNIER, une fois le conteneur debout.
+#
+# ⚠️  On ne recharge QUE si le conteneur tourne, et ce garde-fou compte
+# autant que le rechargement : pour nginx, un proxy_pass dont le nom ne
+# résout pas n'est pas un amont injoignable mais une CONFIGURATION
+# INVALIDE. Le rechargement à chaud serait refusé, et le repli de
+# recharger_nginx — redémarrer le conteneur nginx — laisserait alors
+# l'interface entière refuser de démarrer, pour un module arrêté.
+#
+# Second paramètre : combien de secondes attendre que le conteneur soit
+# debout. 15 après un démarrage qu'on vient de commander, 0 à
+# l'installation, où le module n'a aucune raison de tourner déjà.
+reconnecter_proxy() {
+    local nom="$1" attente="${2:-15}"
+    # Pas de fragment : module sans capacité service_web, rien à router.
+    [ -f "$NGINX_PLUGINS_DIR/$nom.conf" ] || return 0
+
+    local conteneur="docsearch-plugin-$nom" i=0 debout=0
+    while :; do
+        if [ "$($PODMAN container inspect -f '{{.State.Running}}' "$conteneur" 2>/dev/null)" = "true" ]; then
+            debout=1
+            break
+        fi
+        [ "$i" -ge "$attente" ] && break
+        i=$((i + 1))
+        sleep 1
+    done
+
+    if [ "$debout" -eq 0 ]; then
+        if [ "$attente" -eq 0 ]; then
+            log "Module « $nom » pas encore démarré : le routage /ext/$nom/ prendra effet au « plugin enable »."
+        else
+            warn "« $nom » n'est pas démarré au bout de ${attente} s — proxy NON rechargé.
+  Laisser nginx sur l'ancienne adresse vaut mieux que de le recharger sur un
+  nom qui ne résout pas : il rejetterait TOUTE sa configuration. Une fois le
+  module reparti :  sudo $PODMAN exec docsearch-ui-vue nginx -s reload"
+        fi
+        return 0
+    fi
+
+    log "Reconnexion du proxy au module « $nom »..."
+    recharger_nginx
 }
 
 # Écrit l'unité Quadlet du module depuis quadlet/plugin.container.in.
@@ -1415,7 +1496,8 @@ from plugin_ui_config import enregistrer
 m = json.loads(os.environ['MANIFESTE_JSON'])
 nav = m['interface']['nav']
 i = m['interface']
-enregistrer(m['nom'], nav, i['admin_panel'], i['result_action'], i['page'])
+enregistrer(m['nom'], nav, i['admin_panel'], i['result_action'], i['page'],
+            version=m['version'])
 print(f\"{len(nav)} entrée(s) de menu, {len(i['admin_panel'])} réglage(s), \"
       f\"{len(i['result_action'])} action(s), {len(i['page'])} page(s)\")
 " || warn "Accroches d'interface non enregistrées — le module fonctionnera, sans entrée de menu."
@@ -1429,8 +1511,17 @@ print(f\"{len(nav)} entrée(s) de menu, {len(i['admin_panel'])} réglage(s), \"
         PLG_PORT="$(MANIFESTE_JSON="$MANIFESTE" python3 -c "import json,os; print(json.loads(os.environ['MANIFESTE_JSON'])['port'] or '')")"
         if [ -n "$PLG_PORT" ]; then
             ecrire_fragment_nginx "$PLG_NOM" "$PLG_PORT"
-            recharger_nginx
             log "Routage : /ext/$PLG_NOM/ → plugin-$PLG_NOM:$PLG_PORT"
+            # Sans attendre : à une PREMIÈRE installation le conteneur
+            # n'existe pas encore, et recharger nginx sur un nom qui ne
+            # résout pas lui ferait rejeter toute sa configuration — le
+            # repli par redémarrage laisserait alors l'interface entière
+            # à terre pour un module pas même démarré. Le rechargement a
+            # lieu au « plugin enable », une fois le conteneur debout.
+            # À une MISE À JOUR, le conteneur tourne toujours et n'a pas
+            # changé d'adresse : le rechargement prend le nouveau
+            # fragment, ce qui n'a d'effet que si le port a changé.
+            reconnecter_proxy "$PLG_NOM" 0
         fi
 
         log "Module « $PLG_NOM » $PLG_VERSION installé."
@@ -1468,9 +1559,17 @@ print(f\"{'':<16} sources : {sources}\")
             PLG_ACTIF="true"
             systemctl enable --now "docsearch-plugin-$PLG_NOM" 2>/dev/null \
               || systemctl start "docsearch-plugin-$PLG_NOM"
+            # Le conteneur vient de naître, donc avec une adresse neuve :
+            # sans ce rechargement, le proxy garderait celle d'avant et
+            # /ext/<nom>/ rendrait 502 alors que le module tourne.
+            reconnecter_proxy "$PLG_NOM"
         else
             PLG_ACTIF="false"
             systemctl stop "docsearch-plugin-$PLG_NOM" 2>/dev/null || true
+            # Surtout PAS de rechargement ici : le conteneur n'existe plus,
+            # son nom ne résout plus, et nginx refuserait la configuration
+            # entière. L'entrée de menu est masquée juste en dessous, ce
+            # qui suffit à ce que plus personne n'atteigne le 502.
         fi
 
         # Les sources suivent l'état du module : un module arrêté qui
@@ -1511,6 +1610,7 @@ print(f\"entrées de menu : {'affichées' if actif else 'masquées'}\")
         [ -f "$PLUGINS_DIR/$PLG_NOM.json" ] || err "Module inconnu : '$PLG_NOM'"
 
         PLG_IMAGE="$(manifeste_lire "$(cat "$PLUGINS_DIR/$PLG_NOM.json")" image)"
+        PLG_VERSION="$(manifeste_lire "$(cat "$PLUGINS_DIR/$PLG_NOM.json")" version)"
         PLG_SECRETS="$(manifeste_lire "$(cat "$PLUGINS_DIR/$PLG_NOM.json")" secrets)"
         PLG_CPUS="$(MANIFESTE_JSON="$(cat "$PLUGINS_DIR/$PLG_NOM.json")" python3 -c "import json,os; print(json.loads(os.environ['MANIFESTE_JSON'])['ressources']['cpus'])")"
         PLG_MEM="$(MANIFESTE_JSON="$(cat "$PLUGINS_DIR/$PLG_NOM.json")" python3 -c "import json,os; print(json.loads(os.environ['MANIFESTE_JSON'])['ressources']['memoire'])")"
@@ -1519,14 +1619,22 @@ print(f\"entrées de menu : {'affichées' if actif else 'masquées'}\")
                             "$(reglages_du_module "$PLG_NOM")"
         systemctl daemon-reload
         systemctl restart "docsearch-plugin-$PLG_NOM" 2>/dev/null || true
+        # Un redémarrage détruit et recrée le conteneur : même adresse
+        # neuve, même 502 silencieux qu'après « plugin enable » si le
+        # proxy n'est pas rebranché derrière.
+        reconnecter_proxy "$PLG_NOM"
 
         # Le drapeau ne s'éteint qu'APRÈS le redémarrage réel : c'est
         # l'application qui l'éteint, pas l'intention de l'appliquer.
-        export PLG_NOM
-        init_run -e PLG_NOM python3 -c "
+        export PLG_NOM PLG_VERSION
+        init_run -e PLG_NOM -e PLG_VERSION python3 -c "
 import os
-from plugin_ui_config import marquer_applique
+from plugin_ui_config import marquer_applique, set_version
 marquer_applique(os.environ['PLG_NOM'])
+# Recale au passage la version publiée à l'écran d'administration sur
+# celle du manifeste installé : un module posé avant qu'elle soit
+# publiée s'y affiche « version inconnue » jusqu'ici.
+set_version(os.environ['PLG_NOM'], os.environ['PLG_VERSION'])
 print('réglages appliqués')
 " || warn "Drapeau « à redémarrer » non effacé — le panneau continuera de le signaler."
         log "Réglages appliqués à « $PLG_NOM »."

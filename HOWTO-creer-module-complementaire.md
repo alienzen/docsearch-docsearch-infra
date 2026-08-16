@@ -271,6 +271,40 @@ Un module qui n'a pas d'écran à lui — parce que son interface est une
 page du cœur, comme l'assistant de recherche — ne déclare simplement pas
 d'entrée. Un service dorsal n'a rien à faire dans le menu.
 
-⚠️ Trois autres accroches sont prévues (`result_action`, `admin_panel`,
-`page`) et **ne sont pas encore servies** : les déclarer fait refuser le
-manifeste.
+## 2 quater. Se laisser régler (`admin_panel`)
+
+Un module déclare des réglages **typés** ; le cœur dessine le formulaire
+dans l'écran d'administration, avec ses propres composants DSFR. Le module
+ne livre aucun balisage.
+
+```json
+{"interface": {"admin_panel": [
+  {"cle": "poll_interval", "type": "texte",   "libelle": "Intervalle (s)", "defaut": "300"},
+  {"cle": "actif",         "type": "booleen", "libelle": "Synchroniser",   "defaut": true},
+  {"cle": "bureaux",       "type": "liste",   "libelle": "Bureaux",        "defaut": ["Paris"]}
+]}}
+```
+
+Trois types seulement — `booleen`, `texte`, `liste` — parce que le cœur
+doit savoir les rendre tous les trois de façon accessible.
+
+**Comment la valeur vous parvient** : en variable d'environnement, nommée
+`DOCSEARCH_OPT_<CLÉ EN MAJUSCULES>`, et **toujours sous forme de texte**
+— `"true"`/`"false"` pour un booléen, valeurs séparées par des virgules
+pour une liste. Vous n'avez aucune convention à deviner.
+
+Le préfixe n'est pas cosmétique : sans lui, un réglage nommé
+`kafka_bootstrap` réécrirait la configuration que le cœur vous impose.
+
+⚠️ **Un réglage enregistré n'est pas un réglage appliqué.** Les variables
+d'environnement d'un conteneur sont fixées à sa création : le panneau
+signale « réglages non appliqués » jusqu'à ce qu'un administrateur lance
+
+```bash
+sudo ./manage.sh plugin appliquer <nom>
+```
+
+qui réécrit l'unité et redémarre le module.
+
+⚠️ Deux autres accroches sont prévues (`result_action`, `page`) et **ne
+sont pas encore servies** : les déclarer fait refuser le manifeste.

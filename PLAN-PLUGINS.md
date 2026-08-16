@@ -431,7 +431,8 @@ en bout).
 
 ## §3. Interface — points d'accroche déclaratifs
 
-> **Une accroche sur quatre, faite de bout en bout le 2026-08-15.**
+> **Deux accroches sur quatre.** `nav` le 2026-08-15, `admin_panel` le
+> 2026-08-16.
 >
 > Livré : `interface.py` dans le contrat (version 0.5.0), l'accroche
 > `nav` — une entrée de menu —, son enregistrement dans Redis par
@@ -439,7 +440,20 @@ en bout).
 > publication dans `/ui-config`, et son rendu par la page de recherche.
 > L'assistant déclare la sienne. 15 tests de contrat, 4 d'interface.
 >
-> **`result_action`, `admin_panel` et `page` ne sont PAS servies** — les
+> `admin_panel` — des réglages TYPÉS (booléen, texte, liste) déclarés par
+> le module et rendus par le cœur en composants DSFR ; routes
+> `/admin/plugins`, panneau `AdminPluginsPanel.vue`, 7 tests d'interface
+> et 14 de contrat. **La valeur atteint le module en variable
+> d'environnement `DOCSEARCH_OPT_*`, donc à son redémarrage** — arbitré
+> le 2026-08-16 contre les deux autres voies : une route interrogée par le
+> module aurait exigé de lui donner une identité (il ne sait prouver que
+> celle d'un utilisateur), un fichier monté aurait rendu les réglages
+> machine-locaux alors que tout le reste est commun à la grappe. Le
+> panneau signale « réglages non appliqués » jusqu'à
+> `./manage.sh plugin appliquer <nom>` — un réglage enregistré sans effet
+> serait exactement la panne silencieuse qu'on évite partout ailleurs.
+>
+> **`result_action` et `page` ne sont PAS servies** — les
 > déclarer fait refuser le manifeste, plutôt qu'installer un module qui
 > promet un écran que rien n'affiche. Elles suivront le chemin que `nav`
 > a défriché : validation dans `interface.py`, écriture Redis à

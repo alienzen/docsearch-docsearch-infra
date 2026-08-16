@@ -276,6 +276,17 @@ print(' '.join(v) if isinstance(v, list) else v)
 "
 }
 
+# Réglages d'un module, sous la forme DOCSEARCH_OPT_X=valeur (une par
+# ligne). Vide si le module n'en déclare aucun.
+reglages_du_module() {
+    PLG_NOM="$1" init_run -e PLG_NOM python3 -c "
+import os
+from plugin_ui_config import variables_env
+for cle, valeur in variables_env(os.environ['PLG_NOM']).items():
+    print(f'{cle}={valeur}')
+" 2>/dev/null || true
+}
+
 # Noms des sources déclarées par un module installé, en JSON.
 sources_du_manifeste() {
     MANIFESTE_FICHIER="$PLUGINS_DIR/$1.json" python3 -c "
@@ -333,18 +344,31 @@ recharger_nginx() {
 }
 
 # Écrit l'unité Quadlet du module depuis quadlet/plugin.container.in.
+#
+# `reglages` arrive sous la forme DOCSEARCH_OPT_X=valeur, une par ligne,
+# et devient autant de lignes Environment= : c'est le SEUL chemin par
+# lequel un réglage du panneau d'administration atteint un module, qui ne
+# voit ni Redis ni Elasticsearch. Le préfixe est posé par le contrat, pour
+# qu'un réglage ne puisse jamais recouvrir KAFKA_BOOTSTRAP ni
+# DOCSEARCH_API_URL.
+#
+# ⚠️  Aucun commentaire À L'INTÉRIEUR du programme awk : il est en quotes
+# simples, et la moindre apostrophe française y fermerait la chaîne.
 # awk et non sed : la liste des secrets produit un nombre variable de
 # lignes, ce qu'une substitution sed ne sait pas faire lisiblement.
 ecrire_unite_plugin() {
-    local nom="$1" image="$2" cpus="$3" memoire="$4" secrets="$5"
+    local nom="$1" image="$2" cpus="$3" memoire="$4" secrets="$5" reglages="${6:-}"
     local modele="$(dirname "$0")/quadlet/plugin.container.in"
     [ -f "$modele" ] || err "Modèle d'unité introuvable : $modele"
     awk -v nom="$nom" -v image="$image" -v cpus="$cpus" -v memoire="$memoire" \
-        -v secrets="$secrets" -v bootstrap="${KAFKA_BOOTSTRAP:-kafka:9092}" \
+        -v secrets="$secrets" -v reglages="$reglages" \
+        -v bootstrap="${KAFKA_BOOTSTRAP:-kafka:9092}" \
         -v topic="${PLUGIN_TOPIC:-documents-ready}" '
         /@SECRETS@/ {
             n = split(secrets, liste, " ")
             for (i = 1; i <= n; i++) if (liste[i] != "") print "Secret=" liste[i]
+            n = split(reglages, opts, "\n")
+            for (i = 1; i <= n; i++) if (opts[i] != "") print "Environment=" opts[i]
             next
         }
         {
@@ -1362,13 +1386,15 @@ import os, json
 from plugin_ui_config import enregistrer
 m = json.loads(os.environ['MANIFESTE_JSON'])
 nav = m['interface']['nav']
-enregistrer(m['nom'], nav)
-print(f\"{len(nav)} entrée(s) de menu enregistrée(s)\")
+panneau = m['interface']['admin_panel']
+enregistrer(m['nom'], nav, panneau)
+print(f\"{len(nav)} entrée(s) de menu, {len(panneau)} réglage(s) déclaré(s)\")
 " || warn "Accroches d'interface non enregistrées — le module fonctionnera, sans entrée de menu."
 
         mkdir -p "$PLUGINS_DIR"
         printf '%s\n' "$MANIFESTE" > "$PLUGINS_DIR/$PLG_NOM.json"
-        ecrire_unite_plugin "$PLG_NOM" "$PLG_IMAGE" "$PLG_CPUS" "$PLG_MEM" "$PLG_SECRETS"
+        ecrire_unite_plugin "$PLG_NOM" "$PLG_IMAGE" "$PLG_CPUS" "$PLG_MEM" "$PLG_SECRETS" \
+                            "$(reglages_du_module "$PLG_NOM")"
         systemctl daemon-reload
 
         PLG_PORT="$(MANIFESTE_JSON="$MANIFESTE" python3 -c "import json,os; print(json.loads(os.environ['MANIFESTE_JSON'])['port'] or '')")"
@@ -1445,6 +1471,38 @@ print(f\"entrées de menu : {'affichées' if actif else 'masquées'}\")
         fi
         ;;
 
+      appliquer)
+        require_root
+        PLG_NOM="${3:-}"
+        [ -n "$PLG_NOM" ] || err "Usage : sudo ./manage.sh plugin appliquer <nom>
+  Réécrit l'unité du module avec les réglages actuels du panneau
+  d'administration, puis la redémarre. Les variables d'environnement d'un
+  conteneur sont fixées à sa création : un réglage enregistré depuis
+  l'interface ne prend effet qu'ici."
+        [ -f "$PLUGINS_DIR/$PLG_NOM.json" ] || err "Module inconnu : '$PLG_NOM'"
+
+        PLG_IMAGE="$(manifeste_lire "$(cat "$PLUGINS_DIR/$PLG_NOM.json")" image)"
+        PLG_SECRETS="$(manifeste_lire "$(cat "$PLUGINS_DIR/$PLG_NOM.json")" secrets)"
+        PLG_CPUS="$(MANIFESTE_JSON="$(cat "$PLUGINS_DIR/$PLG_NOM.json")" python3 -c "import json,os; print(json.loads(os.environ['MANIFESTE_JSON'])['ressources']['cpus'])")"
+        PLG_MEM="$(MANIFESTE_JSON="$(cat "$PLUGINS_DIR/$PLG_NOM.json")" python3 -c "import json,os; print(json.loads(os.environ['MANIFESTE_JSON'])['ressources']['memoire'])")"
+
+        ecrire_unite_plugin "$PLG_NOM" "$PLG_IMAGE" "$PLG_CPUS" "$PLG_MEM" "$PLG_SECRETS" \
+                            "$(reglages_du_module "$PLG_NOM")"
+        systemctl daemon-reload
+        systemctl restart "docsearch-plugin-$PLG_NOM" 2>/dev/null || true
+
+        # Le drapeau ne s'éteint qu'APRÈS le redémarrage réel : c'est
+        # l'application qui l'éteint, pas l'intention de l'appliquer.
+        export PLG_NOM
+        init_run -e PLG_NOM python3 -c "
+import os
+from plugin_ui_config import marquer_applique
+marquer_applique(os.environ['PLG_NOM'])
+print('réglages appliqués')
+" || warn "Drapeau « à redémarrer » non effacé — le panneau continuera de le signaler."
+        log "Réglages appliqués à « $PLG_NOM »."
+        ;;
+
       remove)
         require_root
         PLG_NOM="${3:-}"
@@ -1498,6 +1556,8 @@ print('entrées de menu retirées')
 
     install <archive.tar>  Valider le manifeste, charger l'image, enregistrer les
                            sources, écrire l'unité systemd (sudo)
+    appliquer <nom>        Réécrire l'unité avec les réglages du panneau
+                           d'administration et redémarrer le module (sudo)
     list                   Modules installés, leur version et leur état
     enable <nom>           Démarrer le module et rendre ses sources cherchables (sudo)
     disable <nom>          L'arrêter et retirer ses sources de la recherche — ne
@@ -1602,6 +1662,8 @@ print('entrées de menu retirées')
     echo "    plugin <sous-commande>   Modules complémentaires :"
     echo "      install <archive.tar>  Valider le manifeste, charger l'image, enregistrer"
     echo "                             les sources, écrire l'unité systemd (sudo)"
+    echo "      appliquer <nom>        Réécrire l'unité avec les réglages du panneau"
+    echo "                             d'administration et redémarrer le module (sudo)"
     echo "      list                   Modules installés, version et état"
     echo "      enable <nom>           Démarrer le module, rendre ses sources cherchables (sudo)"
     echo "      disable <nom>          L'arrêter et le retirer de la recherche — sans rien"

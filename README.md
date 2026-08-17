@@ -21,6 +21,7 @@ DocSearch est découpé en 6 dépôts indépendants :
 | [docsearch-docs](../docsearch-docs) | Documents commerciaux | Géré par les équipes commerciales |
 | [docsearch-plugin-assistant](../docsearch-plugin-assistant) | Assistant de recherche — module complémentaire à `service_web` | Indépendant : s'installe et se retire sans toucher au cœur (voir [HOWTO-creer-module-complementaire.md](HOWTO-creer-module-complementaire.md)) |
 | [docsearch-plugin-annuaire](../docsearch-plugin-annuaire) | Module d'**exemple** — pousse un annuaire d'agents | Le plus court chemin pour comprendre comment un module alimente la recherche |
+| [docsearch-plugin-rss](../docsearch-plugin-rss) | Indexation de flux RSS et Atom — **plusieurs sources**, plusieurs flux chacune | Le seul module à alimenter plus d'une source, et le seul en mode archive (aucun `run_end`, donc aucune suppression) |
 | `docsearch-dataset-generator` | Génération de jeux de test | Cloné à la demande, hors de la disposition ci-dessous |
 
 **Interface historique** — `docsearch-ui` (HTML/JS sans build) a été

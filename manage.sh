@@ -176,7 +176,7 @@ CONTRACT_SRC="$(cd "$(dirname "$0")" && pwd)/contract/docsearch_contract"
 # `app/` et non `vendor/` : les modules Python de ces dépôts sont à plat
 # dans l'image (COPY app/ .), un paquet déposé là est importable sans
 # toucher ni au Dockerfile ni au sys.path des tests.
-CONTRACT_CIBLES="docsearch-api/app/docsearch_contract docsearch-ingestion/app/docsearch_contract docsearch-plugin-assistant/app/docsearch_contract docsearch-plugin-annuaire/app/docsearch_contract"
+CONTRACT_CIBLES="docsearch-api/app/docsearch_contract docsearch-ingestion/app/docsearch_contract docsearch-plugin-assistant/app/docsearch_contract docsearch-plugin-annuaire/app/docsearch_contract docsearch-plugin-rss/app/docsearch_contract"
 
 # Empreinte du contenu du contrat — sert à comparer source et copies.
 # `find | sort` pour un ordre stable, le nom de fichier compte dans

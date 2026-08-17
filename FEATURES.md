@@ -94,6 +94,13 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   Sélection multiple combinée en OU dans une même facette, sauf les
   mots-clés (champ multi-valué) combinés en ET : cocher un second
   mot-clé restreint aux documents qui portent les deux.
+  Le filtre par mot-clé ignore la CASSE (« Budget » = « budget » —
+  cette propriété est saisie à la main dans Word ou Acrobat, où la casse
+  ne veut rien dire), mais pas les accents. Le repli de casse est
+  ASCII-only (automate Lucene, pas un `toLowerCase()` Unicode) : « vélo »
+  et « VéLO » trouvent « Vélo », « VÉLO » non. Conséquence : la facette
+  garde une ligne par casse rencontrée, et cliquer l'une d'elles peut
+  ramener plus de documents que son compte annoncé — jamais moins.
   La colonne **ne montre que les facettes que portent les sources
   sélectionnées** : chercher dans le seul annuaire SQL n'affiche plus
   « Type de fichier », « Auteur », « Mots-clés », « Dossier » ni la
@@ -138,7 +145,10 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   le voit pas.
 - **Documents similaires** ("More Like This") depuis la fiche détail.
 - **Aperçu de documents** en ligne (conversion PDF à la volée via
-  LibreOffice pour les formats bureautiques).
+  LibreOffice pour les formats bureautiques). Couvre aussi les
+  **documents océrisés** : les images JPEG/PNG sont servies telles
+  quelles, les TIFF — sortie courante des scanners, qu'aucun navigateur
+  n'affiche — passent par la même conversion PDF.
 - **Export des résultats** de recherche en XLSX ou DOCX.
 - **Recherches enregistrées** par utilisateur, avec **alertes**
   (fréquence quotidienne ou hebdomadaire) : un worker dédié détecte les
@@ -153,6 +163,12 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
   documents ne vous sont pas accessibles » plutôt que de masquer
   l'écart. Écrire reste au propriétaire ; le destinataire duplique.
   Désactivé par défaut.
+- **Exemples de recherche** proposés sur l'écran d'accueil tant qu'aucune
+  recherche n'a été lancée : cliquables, ils lancent la recherche et
+  enseignent au passage les opérateurs de la syntaxe avancée. Réglables
+  depuis l'administration (« Exemples de recherche », un par ligne) —
+  les bons exemples sont ceux qui parlent du corpus de l'installation.
+  Vide = bloc masqué.
 - **Derniers documents consultés** sur l'écran d'accueil : lus dans les
   clics déjà journalisés, mais relus à travers l'ACL — un document dont
   l'accès a été retiré depuis n'y réapparaît pas. Les effacer
@@ -255,6 +271,28 @@ clair/sombre/système du DSFR, et les gabarits d'affichage des résultats.
 - **Statistiques de recherche** (`stats.html`) : volumétrie, requêtes
   fréquentes, recherches sans résultat, temps de recherche, export,
   journal d'audit des actions d'administration.
+- **Recherches véritables distinguées des tours de page** dans
+  l'historique : chaque clic sur « Suivant » relance la recherche et
+  écrit une ligne de journal de plus, si bien qu'une requête consultée
+  sur cinq pages se lisait comme cinq recherches. Une colonne « Nature »
+  les sépare, une case les masque (écran et export). Les lignes
+  antérieures à la capture du numéro de page restent affichées, marquées
+  « inconnu » — elles ne sont pas supposées « page 1 ». La recherche
+  exacte est signalée au même endroit, parmi les critères.
+  Les compteurs de la vue d'ensemble appliquent le même filtre (total,
+  utilisateurs distincts, recherches par jour et par groupe), en
+  annonçant sous le total combien de tours de page en ont été écartés.
+  Deux exceptions assumées : les AVIS (un pouce donné depuis la page 3
+  est un avis réel) et les TEMPS de recherche (un tour de page est une
+  vraie requête, et c'est en pagination profonde que le moteur est le
+  plus lent).
+- **Recherches sans résultat, avec leurs critères** : chaque requête
+  infructueuse porte les filtres rencontrés avec elle (type, auteur,
+  dossier, mot-clé, source, champ interrogé, période) et le nombre
+  d'occurrences lancées SANS aucun filtre. C'est ce dernier compte qui
+  distingue un écran vide dû à du contenu manquant d'un écran vide dû à
+  un filtre trop serré — les deux sont identiques pour l'utilisateur, et
+  n'appellent pas la même correction.
 - **Mesure des temps de recherche** sur le trafic réel, et non sur une
   requête témoin : chaque recherche enregistre le temps du moteur
   (`took` d'Elasticsearch) et le temps total de l'API, dont l'écart

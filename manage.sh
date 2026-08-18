@@ -1482,6 +1482,11 @@ for source in m['sources']:
         searchable=(ancienne.searchable if ancienne else source['searchable']),
         collectable=(ancienne.collectable if ancienne else source['collectable']),
         allowed_groups=(list(ancienne.allowed_groups) if ancienne else source['allowed_groups']),
+        # Repris du MANIFESTE et jamais de l'entrée existante, à la
+        # différence des trois lignes ci-dessus : l'ordre par défaut est
+        # une décision du module, pas un réglage d'administrateur. Une
+        # mise à jour qui le change doit donc l'appliquer.
+        tri_defaut=source['tri_defaut'],
     )
     print(f\"source '{nom}' enregistrée (index {source['es_index']}, ACL {source['acl_policy']})\")
 " || err "Enregistrement des sources impossible — l'image est chargée, l'unité n'est PAS écrite."

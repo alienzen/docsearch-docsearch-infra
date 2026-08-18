@@ -232,3 +232,26 @@ def test_manifeste_sans_interface_rend_une_interface_vide():
     assert manifeste.valider_manifeste(base())["interface"] == {
         "nav": [], "admin_panel": [], "result_action": [], "page": [],
     }
+
+
+# ── Tri par défaut déclaré au manifeste (contrat 0.8.0) ──────
+
+def test_une_source_du_manifeste_peut_demander_son_tri():
+    """Chemin réellement emprunté par un module : c'est le manifeste, et
+    non un appel direct au registre, qui porte la déclaration."""
+    m = manifeste.valider_manifeste(base(sources=[{
+        "nom": "presse", "es_index": "rss_presse", "acl_policy": "public",
+        "tri_defaut": "date_modified",
+    }]))
+    assert m["sources"][0]["tri_defaut"] == "date_modified"
+
+
+def test_le_manifeste_refuse_aussi_un_tri_inconnu():
+    """La validation des sources du manifeste délègue à
+    valider_declaration() : ce test garde ce chaînage, qu'une
+    réécriture de _valider_sources romprait sans bruit."""
+    with pytest.raises(ContratInvalide, match="Tri par défaut inconnu"):
+        manifeste.valider_manifeste(base(sources=[{
+            "nom": "presse", "es_index": "rss_presse", "acl_policy": "public",
+            "tri_defaut": "popularite",
+        }]))

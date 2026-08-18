@@ -123,3 +123,52 @@ def test_lecture_tolerante_aux_cles_inconnues():
     source = plugins.depuis_dict("vieille", {"plugin": "x", "es_index": "y", "cle_du_futur": 42})
     assert source.plugin == "x"
     assert source.searchable is True
+
+
+# ── Tri par défaut d'une source ──────────────────────────────
+#
+# Contrat 0.8.0. Ce qui se joue ici n'est pas le confort d'affichage mais
+# le fait qu'une valeur acceptée à l'enregistrement doit rester triable
+# par le cœur : trier sur un champ dont il ignore le type ES casse la
+# recherche fédérée ENTIÈRE, pas seulement la source concernée.
+
+def test_sans_tri_declare_c_est_la_pertinence():
+    """Une source qui ne dit rien obtient exactement ce qu'elle avait
+    avant 0.8 — c'est ce qui rend l'ajout indolore."""
+    assert plugins.valider_declaration(BASE)["tri_defaut"] == "_score"
+
+
+@pytest.mark.parametrize("tri", plugins.TRIS_POSSIBLES)
+def test_les_tris_du_schema_commun_sont_acceptes(tri):
+    cfg = plugins.valider_declaration({**BASE, "tri_defaut": tri})
+    assert cfg["tri_defaut"] == tri
+
+
+def test_un_tri_inconnu_est_refuse():
+    with pytest.raises(ContratInvalide, match="Tri par défaut inconnu"):
+        plugins.valider_declaration({**BASE, "tri_defaut": "popularite"})
+
+
+def test_un_champ_supplementaire_n_est_pas_un_tri_acceptable():
+    """Le cas piégeux : le champ EXISTE bel et bien dans la source, et la
+    déclaration a donc l'air juste. Elle est refusée quand même, parce
+    que le consommateur qui pose la clause de tri n'a pas le type ES du
+    champ sous la main et ne peut pas en déduire l'`unmapped_type`."""
+    with pytest.raises(ContratInvalide, match="Tri par défaut inconnu"):
+        plugins.valider_declaration({
+            **BASE,
+            "fields": [{"nom": "publie_le", "es_type": "date"}],
+            "tri_defaut": "publie_le",
+        })
+
+
+def test_le_tri_survit_a_l_aller_retour():
+    cfg = plugins.valider_declaration({**BASE, "tri_defaut": "date_modified"})
+    assert plugins.depuis_dict("tickets", cfg).tri_defaut == "date_modified"
+
+
+def test_une_entree_ecrite_avant_0_8_se_lit_en_pertinence():
+    """Chemin de LECTURE, emprunté à chaque passage : une source
+    enregistrée sous 0.7 n'a pas la clé, et doit continuer de se lire."""
+    source = plugins.depuis_dict("ancienne", {"plugin": "x", "es_index": "y"})
+    assert source.tri_defaut == "_score"

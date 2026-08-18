@@ -159,3 +159,25 @@ def test_egalite_ignore_l_objet_natif():
     a = sources.entry("file", "x", SourceFichier("x", "x_idx", label="X"))
     b = sources.entry("file", "x", SourceFichier("x", "x_idx", label="X", folder="/autre"))
     assert a == b
+
+
+# ── Tri par défaut, vu du registre (contrat 0.8.0) ───────────
+
+def test_une_source_native_ne_reordonne_rien():
+    """Les trois registres natifs n'ont pas l'attribut : ils doivent
+    retomber sur la pertinence, et non faire échouer la normalisation —
+    c'est toute l'énumération qui tomberait avec elle."""
+    class SourceFichier:
+        es_index = "documents"
+        searchable = True
+
+    assert sources.entry("file", "documents", SourceFichier()).tri_defaut == "_score"
+
+
+def test_une_source_de_module_expose_son_tri():
+    class SourcePlugin:
+        es_index = "rss_presse"
+        searchable = True
+        tri_defaut = "date_modified"
+
+    assert sources.entry("plugin:rss", "presse", SourcePlugin()).tri_defaut == "date_modified"
